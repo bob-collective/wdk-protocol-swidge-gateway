@@ -26,7 +26,9 @@ export function createDefaultTransport (deps = {}) {
         body: body === undefined ? undefined : JSON.stringify(body)
       })
       const text = await res.text().catch(() => '')
-      return { status: res.status, body: text ? JSON.parse(text) : null }
+      let parsed = null
+      try { if (text) parsed = JSON.parse(text) } catch { /* non-JSON body → null */ }
+      return { status: res.status, body: parsed }
     }
   }
 }

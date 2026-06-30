@@ -9,3 +9,13 @@ test('request builds query string and parses JSON', async () => {
   expect(fetchMock).toHaveBeenCalledWith('https://api/x?a=1', expect.objectContaining({ method: 'GET' }))
   expect(res).toEqual({ status: 200, body: { ok: true } })
 })
+
+test('throws a clear error when no fetch is available', () => {
+  const g = globalThis.fetch
+  try {
+    globalThis.fetch = undefined
+    expect(() => createDefaultTransport({ fetch: undefined })).toThrow(/no fetch available/i)
+  } finally {
+    globalThis.fetch = g
+  }
+})
