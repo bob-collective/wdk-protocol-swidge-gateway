@@ -23,3 +23,18 @@ test('getRequiredApproval returns null when allowance sufficient', async () => {
   const account = { getAllowance: jest.fn(async () => 1000n) }
   expect(await evmAdapter.getRequiredApproval(account, '0xtok', '0xspender', 500n)).toBeNull()
 })
+
+test('getRequiredApproval returns the approval when allowance is insufficient', async () => {
+  const account = { getAllowance: jest.fn(async () => 100n) }
+  const out = await evmAdapter.getRequiredApproval(account, '0xtok', '0xspender', 500n)
+  expect(account.getAllowance).toHaveBeenCalledWith('0xtok', '0xspender')
+  expect(out).toEqual({ token: '0xtok', spender: '0xspender', amount: 500n })
+  expect(typeof out.amount).toBe('bigint')
+})
+
+test('getRequiredApproval returns null for native/zero-address and empty token (no allowance call)', async () => {
+  const account = { getAllowance: jest.fn(async () => 0n) }
+  expect(await evmAdapter.getRequiredApproval(account, '0x0000000000000000000000000000000000000000', '0xspender', 500n)).toBeNull()
+  expect(await evmAdapter.getRequiredApproval(account, '', '0xspender', 500n)).toBeNull()
+  expect(account.getAllowance).not.toHaveBeenCalled()
+})
