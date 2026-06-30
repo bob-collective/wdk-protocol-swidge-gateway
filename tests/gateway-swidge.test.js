@@ -63,9 +63,10 @@ test('_resolveChains throws when fromChain is missing', async () => {
     .rejects.toThrow('source chain unknown')
 })
 
-test('swidge offramp: registers with srcTxHash and srcChain', async () => {
+test('swidge offramp: registers with srcTxHash and quote srcChain (not caller fromChain)', async () => {
+  // quote.offramp.srcChain = 'bob' overrides the caller's fromChain = 'base'
   const evmClient = fakeClient({
-    getQuote: jest.fn(async () => ({ offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' } } })),
+    getQuote: jest.fn(async () => ({ offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, srcChain: 'bob' } })),
     createOrder: jest.fn(async () => ({ offramp: { orderId: 'o2', tx: { to: '0xto', data: '0xdata', value: '0' } } }))
   })
   const account = {
@@ -75,10 +76,26 @@ test('swidge offramp: registers with srcTxHash and srcChain', async () => {
   const sw = new GatewaySwidge(account, { fromChain: 'base', client: evmClient })
   const res = await sw.swidge({ fromToken: '0xtok', toToken: 'BTC', toChain: 'bitcoin', recipient: 'bc1qrcpt', fromTokenAmount: 1000n })
   expect(evmClient.registerTx).toHaveBeenCalledWith({
-    offramp: { orderId: 'o2', srcTxHash: '0xtxhash', srcChain: 'base' }
+    offramp: { orderId: 'o2', srcTxHash: '0xtxhash', srcChain: 'bob' }
   })
   expect(res.id).toBe('o2')
   expect(res.hash).toBe('0xtxhash')
+})
+
+test('swidge offramp: falls back to fromChain when quote has no srcChain', async () => {
+  const evmClient = fakeClient({
+    getQuote: jest.fn(async () => ({ offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' } } })),
+    createOrder: jest.fn(async () => ({ offramp: { orderId: 'o2b', tx: { to: '0xto', data: '0xdata', value: '0' } } }))
+  })
+  const account = {
+    getAddress: async () => '0xsender',
+    sendTransaction: async () => ({ hash: '0xtxhash2' })
+  }
+  const sw = new GatewaySwidge(account, { fromChain: 'base', client: evmClient })
+  await sw.swidge({ fromToken: '0xtok', toToken: 'BTC', toChain: 'bitcoin', recipient: 'bc1qrcpt', fromTokenAmount: 1000n })
+  expect(evmClient.registerTx).toHaveBeenCalledWith({
+    offramp: { orderId: 'o2b', srcTxHash: '0xtxhash2', srcChain: 'base' }
+  })
 })
 
 test('getRequiredApproval: caches spender per route — createOrder called at most once', async () => {

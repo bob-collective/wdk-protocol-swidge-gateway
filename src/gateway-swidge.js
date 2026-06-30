@@ -117,7 +117,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       txid = id
     } else {
       const sent = await adapter.send(this._account, payload, { aaConfig: this._aaConfig(config) })
-      await this._registerBestEffort({ [variant]: { orderId: payload.orderId, srcTxHash: sent.txid, srcChain: fromChain } })
+      await this._registerBestEffort({ [variant]: { orderId: payload.orderId, srcTxHash: sent.txid, srcChain: (quote[variant] && quote[variant].srcChain) || fromChain } })
       txid = sent.txid
     }
 

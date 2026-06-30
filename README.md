@@ -257,6 +257,16 @@ Returns the ERC-20 approval the caller must grant before executing an offramp or
 | EVM ↔ EVM | Bidirectional | Use `swap()` / `bridge()` (inherited). Affiliate fees not supported on this route. |
 | Solana | Coming soon | Not available in v1 |
 
+## Known Limitations & Integration Notes
+
+- **USDT (Ethereum) approval reset:** Before an offramp of USDT-on-Ethereum, the WDK account's `approve()` throws if a non-zero allowance is already set — USDT's non-standard `approve` reverts when changing from a non-zero value. You must send `approve({ token, spender, amount: 0n })` first to reset to zero, then approve the real amount. (The underlying transaction itself is a plain ERC-20 call, so WDK's signing path is fine.)
+
+- **Approval pre-flight (`getRequiredApproval`) is a simple allowance check:** It returns an approval whenever `allowance < amount`. Some OFT-style receiver contracts do not require an ERC-20 approval at all; for those, approving anyway is harmless (the gateway contract ignores the allowance). The `@gobob/bob-sdk` additionally probes the receiver's `approvalRequired()` method; this module does not — it relies on the gateway to route the transaction correctly.
+
+- **Offramp tx is registered on broadcast, not after mining:** WDK's `sendTransaction` returns once the tx is broadcast; the module registers the resulting `srcTxHash` immediately. The gateway watches the chain for the registered hash, so no confirmation wait is required — this is expected behaviour, not a race condition.
+
+- **Gas:** The module relies on the WDK account's built-in gas estimation with no extra buffer. If an offramp contract call ever reverts out-of-gas, pass a gas override via the account's send options or raise an issue.
+
 ## 🔒 Security Considerations
 
 - **Keys never leave the WDK account.** All signing is delegated to the account abstraction layer — `GatewaySwidge` never has direct key access.
