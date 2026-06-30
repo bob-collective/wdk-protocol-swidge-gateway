@@ -3,6 +3,7 @@
   "version": "0.0.1",
   "description": "BOB Gateway swidge module for the Tether Wallet Development Kit — native BTC ⇄ token routes.",
   "type": "module",
+  "packageManager": "pnpm@10.34.4",
   "main": "index.js",
   "exports": {
     ".": { "types": "./types/index.d.ts", "bare": "./bare.js", "default": "./index.js" },
