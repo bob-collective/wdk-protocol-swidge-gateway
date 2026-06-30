@@ -119,10 +119,13 @@ try {
   await sw.swidge(options)
 } catch (err) {
   if (err instanceof GatewaySwidgeError) {
-    console.error(err.code, err.message) // e.g. ERR.INSUFFICIENT_LIQUIDITY
+    // err.code is one of the ERR constants below
+    console.error(err.code, err.message) // e.g. ERR.HTTP, ERR.UNSUPPORTED_ROUTE
   }
 }
 ```
+
+**Error codes (`ERR`):** `HTTP` (`'GATEWAY_HTTP_ERROR'`), `VALIDATION` (`'VALIDATION_ERROR'`), `UNSUPPORTED_ROUTE`, `NOT_SUPPORTED`, `APPROVAL_REQUIRED`.
 
 ## Affiliate Fee Configuration
 
