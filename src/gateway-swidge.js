@@ -45,6 +45,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     this._slippage = config.slippage ?? DEFAULT_SLIPPAGE
     this._feeRate = config.feeRate
     this._fromChain = config.fromChain
+    this._spenderCache = new Map()
   }
 
   /**
@@ -171,8 +172,12 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /**
-   * Compute the ERC-20 approval a caller must grant before an offramp/tokenSwap swidge.
-   * Returns null when no approval is needed (native asset or allowance sufficient).
+   * Returns the ERC-20/TRC-20 approval the caller must grant before an offramp/tokenSwap swidge,
+   * or null when none is needed (incl. all onramp routes).
+   *
+   * NOTE: on a cache miss this creates a Gateway order to discover the spender contract address
+   * (the V3 API exposes no read-only spender lookup); results are cached per route on this
+   * instance, so call it once per route, not before every swap.
    *
    * @param {object} options SwidgeOptions
    * @returns {Promise<{token: string, spender: string, amount: bigint}|null>}
@@ -180,10 +185,18 @@ export class GatewaySwidge extends SwidgeProtocol {
   async getRequiredApproval (options) {
     const { params, variant } = await this._buildQuoteParams(options)
     if (variant === 'onramp') return null
-    const quote = await this._client.getQuote(params)
-    const order = await this._client.createOrder({ [variant]: quote[variant] })
-    const payload = orderPayload(order, variant)
-    return evmAdapter.getRequiredApproval(this._account, options.fromToken, payload.tx.to, options.fromTokenAmount)
+    const key = `${variant}:${options.fromToken}:${options.toToken}:${options.toChain || ''}`
+    let spender
+    if (this._spenderCache.has(key)) {
+      spender = this._spenderCache.get(key)
+    } else {
+      const quote = await this._client.getQuote(params)
+      const order = await this._client.createOrder({ [variant]: quote[variant] })
+      const payload = orderPayload(order, variant, quote)
+      spender = payload.tx.to
+      this._spenderCache.set(key, spender)
+    }
+    return evmAdapter.getRequiredApproval(this._account, options.fromToken, spender, options.fromTokenAmount)
   }
 }
 

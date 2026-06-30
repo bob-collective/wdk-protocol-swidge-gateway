@@ -80,3 +80,38 @@ test('swidge offramp: registers with srcTxHash and srcChain', async () => {
   expect(res.id).toBe('o2')
   expect(res.hash).toBe('0xtxhash')
 })
+
+test('getRequiredApproval: caches spender per route — createOrder called at most once', async () => {
+  const offrampClient = fakeClient({
+    getQuote: jest.fn(async () => ({
+      offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, fees: {} }
+    })),
+    createOrder: jest.fn(async () => ({
+      offramp: { orderId: 'o3', tx: { to: '0xspender', data: '0xdata', value: '0' } }
+    }))
+  })
+  const account = {
+    getAddress: async () => '0xsender',
+    getAllowance: jest.fn(async () => 0n)
+  }
+  const sw = new GatewaySwidge(account, { fromChain: 'base', client: offrampClient })
+  const options = { fromToken: '0xtok', toToken: 'BTC', toChain: 'bitcoin', recipient: 'bc1qrcpt', fromTokenAmount: 500n }
+
+  const first = await sw.getRequiredApproval(options)
+  const second = await sw.getRequiredApproval(options)
+
+  expect(offrampClient.createOrder).toHaveBeenCalledTimes(1)
+  expect(first).toEqual({ token: '0xtok', spender: '0xspender', amount: 500n })
+  expect(second).toEqual({ token: '0xtok', spender: '0xspender', amount: 500n })
+})
+
+test('getRequiredApproval: returns null for onramp routes without calling createOrder', async () => {
+  const client = fakeClient()
+  const account = { getAddress: async () => 'bc1q' }
+  const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', client })
+  const result = await sw.getRequiredApproval({
+    fromToken: 'BTC', toToken: '0xtok', toChain: 'base', recipient: '0xrcpt', fromTokenAmount: 100000n
+  })
+  expect(result).toBeNull()
+  expect(client.createOrder).not.toHaveBeenCalled()
+})

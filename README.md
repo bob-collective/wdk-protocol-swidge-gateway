@@ -242,6 +242,8 @@ Returns supported tokens, optionally filtered by `options`.
 
 Returns the ERC-20 approval the caller must grant before executing an offramp or token-swap swidge. Returns `null` for onramp routes (native asset, no approval needed).
 
+**Important:** On a cache miss, this method creates a Gateway order internally to discover the spender contract address (the V3 API has no read-only spender lookup endpoint). Results are cached per route on the `GatewaySwidge` instance, so callers should not invoke `getRequiredApproval` before every swap — call it once per route and reuse the result.
+
 #### Inherited methods
 
 `swap(options)`, `bridge(options)`, `quoteSwap(options)`, `quoteBridge(options)` — inherited from `SwidgeProtocol` for EVM↔EVM routes.
