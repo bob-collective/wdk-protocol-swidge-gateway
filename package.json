@@ -1,0 +1,39 @@
+{
+  "name": "@gobob/wdk-protocol-swidge-gateway",
+  "version": "0.0.1",
+  "description": "BOB Gateway swidge module for the Tether Wallet Development Kit — native BTC ⇄ token routes.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": { "types": "./types/index.d.ts", "bare": "./bare.js", "default": "./index.js" },
+    "./package": { "default": "./package.json" }
+  },
+  "scripts": {
+    "build:types": "tsc",
+    "lint": "standard",
+    "lint:fix": "standard --fix",
+    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --passWithNoTests",
+    "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage --passWithNoTests"
+  },
+  "dependencies": {
+    "@tetherto/wdk-wallet": "*",
+    "ethers": "^6",
+    "tronweb": "^6",
+    "bare-node-runtime": "*"
+  },
+  "peerDependencies": {
+    "@tetherto/wdk-wallet-btc": "*",
+    "@tetherto/wdk-wallet-evm": "*",
+    "@tetherto/wdk-wallet-evm-erc-4337": "*"
+  },
+  "devDependencies": {
+    "cross-env": "^7",
+    "jest": "^29",
+    "standard": "^17",
+    "typescript": "^5"
+  },
+  "standard": {
+    "ignore": ["bare.js"]
+  },
+  "license": "Apache-2.0"
+}

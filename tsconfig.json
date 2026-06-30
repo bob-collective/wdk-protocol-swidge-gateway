@@ -1,0 +1,7 @@
+{
+  "compilerOptions": {
+    "allowJs": true, "checkJs": true, "declaration": true, "emitDeclarationOnly": true,
+    "outDir": "types", "module": "NodeNext", "moduleResolution": "NodeNext", "target": "ES2022", "strict": true
+  },
+  "include": ["index.js", "src/**/*.js"]
+}
