@@ -25,11 +25,11 @@ import type { BtcOrderPayload, EvmOrderPayload } from './map/order.js'
 import type { SwidgeSimulation } from './types.js'
 
 const DEFAULT_SLIPPAGE = 0.03
-const BOB_API_KEY = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
+const BOB_BEARER_TOKEN = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
 
 export interface GatewaySwidgeConfig {
   apiUrl?: string
-  apiKey?: string
+  bearerToken?: string
   http?: GatewayClientConfig['http']
   client?: GatewayClient
   affiliates?: Affiliate[]
@@ -64,7 +64,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       config.client ||
       new GatewayClient({
         apiUrl: config.apiUrl,
-        apiKey: config.apiKey || BOB_API_KEY,
+        bearerToken: config.bearerToken || BOB_BEARER_TOKEN,
         http: config.http,
       })
     this._affiliates = config.affiliates

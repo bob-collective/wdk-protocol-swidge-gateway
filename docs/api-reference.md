@@ -22,7 +22,7 @@ new GatewaySwidge(account, config?)
 |-----------|------|---------|-------------|
 | `account` | `object` | — | WDK wallet account (BTC or EVM). |
 | `config.apiUrl` | `string` | BOB Gateway V3 | Gateway API base URL. |
-| `config.apiKey` | `string` | BOB attribution key | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee). |
+| `config.bearerToken` | `string` | BOB attribution key | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee). |
 | `config.http` | `object` | — | Injectable HTTP transport (for tests). |
 | `config.affiliates` | `Array<{address: string, bps: number}>` | — | Affiliate fee entries. |
 | `config.paymasterToken` | `string` | — | ERC-20 paymaster token for AA accounts. |

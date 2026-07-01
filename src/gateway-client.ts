@@ -32,26 +32,26 @@ function sleep(ms: number): Promise<void> {
 
 export interface GatewayClientConfig {
   apiUrl?: string
-  apiKey?: string
+  bearerToken?: string
   http?: HttpTransport
   maxRetries?: number
 }
 
 export class GatewayClient {
   private _base: string
-  private _apiKey: string | undefined
+  private _bearerToken: string | undefined
   private _http: HttpTransport
   private _maxRetries: number
 
   constructor(config: GatewayClientConfig = {}) {
     this._base = (config.apiUrl || DEFAULT_API).replace(/\/$/, '')
-    this._apiKey = config.apiKey
+    this._bearerToken = config.bearerToken
     this._http = config.http || createDefaultTransport()
     this._maxRetries = config.maxRetries ?? 3
   }
 
   private _headers(): Record<string, string> {
-    return this._apiKey ? { authorization: `Bearer ${this._apiKey}` } : {}
+    return this._bearerToken ? { authorization: `Bearer ${this._bearerToken}` } : {}
   }
 
   private async _call(
