@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@tetherto/wdk-wallet": "1.0.0-beta.12",
+    "bitcoinjs-lib": "6.1.7",
     "ethers": "^6",
     "tronweb": "^6",
     "bare-node-runtime": "*"

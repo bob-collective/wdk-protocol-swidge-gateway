@@ -10,4 +10,12 @@ export const tronAdapter = {
         'Tracking: https://github.com/tetherto/wdk-wallet-tron/issues/48'
     )
   },
+
+  async simulate(): Promise<never> {
+    throw new GatewaySwidgeError(
+      ERR.NOT_SUPPORTED,
+      'Tron is destination-only in v1: simulate is not supported. ' +
+        'Tracking: https://github.com/tetherto/wdk-wallet-tron/issues/48'
+    )
+  },
 }
