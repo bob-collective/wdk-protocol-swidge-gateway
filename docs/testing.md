@@ -105,3 +105,52 @@ The offramp `simulateSwidge` test accepts two valid outcomes:
 A third outcome — `valid: false`, `requiredApproval: null` — would indicate a hard error and causes the test to fail.
 
 To move to the first outcome without a real on-chain approval, configure `rpc-ethereum` in 1Password to point at a Tenderly virtual testnet URL that has the account's USDT allowance pre-set as a state override (a future enhancement to this lane).
+
+---
+
+## 8. Executing a real swap (mainnet, real funds)
+
+> **Warning:** the steps below broadcast real mainnet transactions and move real money. Follow the phase order and read each step carefully.
+
+### Overview of the three phases
+
+| Phase | `PHASE=` | What it does | Irreversible? |
+|-------|---------|--------------|--------------|
+| **onramp** | `onramp` | BTC → USDT@Ethereum — builds and broadcasts a BTC transaction | Yes |
+| **offramp** | `offramp` | USDT@Ethereum → BTC — checks/waits for ERC-20 approval, then broadcasts an EVM tx | Yes |
+| **status** | `status` | Read-only — prints order status, EVM USDT balance, and BTC address | No |
+
+### Recommended sequence
+
+1. Run `pnpm derive-addresses` (or the **derive test addresses** workflow) to confirm the funded wallet addresses.
+2. **Onramp:** trigger the workflow with `phase=onramp` and `amount=<sats>`. Copy the `ORDER_ID` from the run log.
+3. **Wait for settlement:** monitor the onramp order via `phase=status` and `order_id=<ORDER_ID>` until `status` shows the swap is complete (funds arrive on Ethereum). Do not proceed to offramp until settlement is confirmed — use public block explorers or the status phase to verify.
+4. **Offramp:** trigger the workflow with `phase=offramp` and `amount=<USDT 6dp>`. The script will handle ERC-20 approval automatically (polling up to 5 minutes for the approval tx to mine) before sending the swap tx.
+
+### The `confirm` guard
+
+The workflow requires the `confirm` input to be set to exactly `yes-spend-real-funds`. If any other value (or blank) is supplied the job exits immediately with an error before any secrets are loaded or any transaction is built. This prevents accidental runs from UI mis-clicks.
+
+The guard input is read via an `env:` variable in the workflow — it is never interpolated directly into a `run:` string, which prevents shell-injection attacks.
+
+### Running locally
+
+```bash
+# Build first (the script imports from dist/)
+pnpm build
+
+# Onramp example (30 000 sats)
+TEST_SEED="<mnemonic>" PHASE=onramp AMOUNT=30000 pnpm execute-swap
+
+# Status check
+TEST_SEED="<mnemonic>" PHASE=status ORDER_ID=<id> pnpm execute-swap
+
+# Offramp example (50 USDT = 50 000 000 in 6dp)
+TEST_SEED="<mnemonic>" PHASE=offramp AMOUNT=50000000 pnpm execute-swap
+```
+
+Use `op run` to inject the seed from 1Password instead of exporting it to the shell:
+
+```bash
+op run --env-file=.env.op -- pnpm execute-swap
+```

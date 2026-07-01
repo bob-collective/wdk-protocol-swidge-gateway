@@ -22,7 +22,8 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "derive-addresses": "tsx scripts/derive-addresses.ts"
+    "derive-addresses": "tsx scripts/derive-addresses.ts",
+    "execute-swap": "tsx scripts/execute-swap.ts"
   },
   "dependencies": {
     "@tetherto/wdk-wallet": "1.0.0-beta.12",

@@ -1,0 +1,79 @@
+name: WDK Gateway — execute real swap (mainnet, real funds)
+
+# DANGER: this workflow broadcasts real mainnet transactions and moves real money.
+# It is manually triggered only and requires explicit confirmation via the `confirm` input.
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "Swap phase to execute"
+        required: true
+        type: choice
+        options:
+          - onramp
+          - offramp
+          - status
+      amount:
+        description: "Amount to swap (sats for onramp; USDT 6-decimal units for offramp; leave blank for status)"
+        required: false
+        default: ""
+      order_id:
+        description: "Gateway order ID (required for status phase)"
+        required: false
+        default: ""
+      confirm:
+        description: "Safety guard — type exactly: yes-spend-real-funds"
+        required: true
+        default: ""
+
+jobs:
+  execute-swap:
+    name: Execute real swap (${{ github.event.inputs.phase }})
+    runs-on: bob-ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ------------------------------------------------------------------
+      # Safety guard: abort immediately if the confirmation string is wrong.
+      # Input is read via env: — never interpolated directly into run: to
+      # prevent shell-injection attacks.
+      # ------------------------------------------------------------------
+      - name: Confirm real-funds guard
+        env:
+          CONFIRM: ${{ github.event.inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "yes-spend-real-funds" ]; then
+            echo "ERROR: Safety guard not satisfied."
+            echo "  Set the 'confirm' input to exactly: yes-spend-real-funds"
+            exit 1
+          fi
+          echo "Safety guard confirmed."
+
+      - uses: actions/checkout@v4
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v3
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          TEST_SEED: op://WDK Gateway/seed/mnemonic
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Execute swap
+        env:
+          PHASE: ${{ github.event.inputs.phase }}
+          AMOUNT: ${{ github.event.inputs.amount }}
+          ORDER_ID: ${{ github.event.inputs.order_id }}
+        run: pnpm execute-swap
