@@ -60,7 +60,7 @@ EVM address: 0x…
 ```
 
 Fund them:
-- **BTC address** — send at least 100 000 sats (0.001 BTC) to cover the `AMOUNT_SATS` default plus fees.
+- **BTC address** — send at least 30 000 sats (~0.0003 BTC) to cover the `AMOUNT_SATS` default plus fees. This fits a ~$50 test wallet; bump `AMOUNT_SATS` if you funded more.
 - **EVM address** — send at least 50 USDT (`AMOUNT_USDT` default = 50 000 000 in 6-decimal units) and a small amount of ETH for gas estimation (≥ 0.001 ETH).
 
 ---

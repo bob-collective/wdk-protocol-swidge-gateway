@@ -13,7 +13,7 @@
  * Environment variables:
  *   TEST_SEED       — BIP-39 mnemonic (required)
  *   EVM_RPC_URL     — JSON-RPC endpoint for Ethereum (default: https://eth.llamarpc.com)
- *   AMOUNT_SATS     — BTC onramp amount in satoshis (default: 100000)
+ *   AMOUNT_SATS     — BTC onramp amount in satoshis (default: 30000, ~$30 — fits a $50 test wallet with fee headroom)
  *   AMOUNT_USDT     — USDT offramp amount in smallest unit (default: 50000000 = 50 USDT)
  */
 
@@ -30,7 +30,7 @@ const RUN = !!process.env.TEST_SEED
     const USDT_ETHEREUM = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
     const BTC_ZERO = '0x0000000000000000000000000000000000000000'
     const EVM_RPC = process.env.EVM_RPC_URL ?? 'https://eth.llamarpc.com'
-    const AMOUNT_SATS = BigInt(process.env.AMOUNT_SATS ?? '100000')
+    const AMOUNT_SATS = BigInt(process.env.AMOUNT_SATS ?? '30000')
     const AMOUNT_USDT = BigInt(process.env.AMOUNT_USDT ?? '50000000')
 
     // Lazily resolved — only populated once the first test runs.
