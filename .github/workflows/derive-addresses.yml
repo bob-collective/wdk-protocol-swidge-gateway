@@ -1,20 +1,21 @@
-name: WDK Gateway — validate (quote + simulate, no swap)
+name: WDK Gateway — derive test addresses
+
+# One-shot helper: prints the BTC (BIP-84) and EVM (BIP-44) addresses that the
+# TEST_SEED mnemonic derives, so they can be funded. Addresses are public — safe
+# to print in the run log. The seed is injected from 1Password and never logged.
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 7 * * *'
 
 jobs:
-  validate:
-    name: Validate quote + simulate (mainnet, no swap)
+  derive:
+    name: Print BTC + EVM addresses to fund
     runs-on: bob-ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
-      - name: Load secrets from 1Password
+      - name: Load seed from 1Password
         uses: 1password/load-secrets-action@v3
         with:
           export-env: true
@@ -31,7 +32,5 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - run: pnpm build
-
-      - name: Run integration suite
-        run: pnpm exec vitest run tests/integration
+      - name: Derive addresses
+        run: pnpm derive-addresses
