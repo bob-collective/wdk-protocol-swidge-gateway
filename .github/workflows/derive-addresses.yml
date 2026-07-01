@@ -1,0 +1,36 @@
+name: WDK Gateway — derive test addresses
+
+# One-shot helper: prints the BTC (BIP-84) and EVM (BIP-44) addresses that the
+# TEST_SEED mnemonic derives, so they can be funded. Addresses are public — safe
+# to print in the run log. The seed is injected from 1Password and never logged.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  derive:
+    name: Print BTC + EVM addresses to fund
+    runs-on: bob-ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load seed from 1Password
+        uses: 1password/load-secrets-action@v3
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          TEST_SEED: op://WDK Gateway/seed/mnemonic
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Derive addresses
+        run: pnpm derive-addresses
