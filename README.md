@@ -283,6 +283,17 @@ pnpm run test
 pnpm run build:types
 ```
 
+### Test accounts (local development)
+
+The shared mainnet test accounts used by the CI validation and swap lanes are derived from the `op://WDK Gateway/seed/mnemonic` 1Password item (BIP-84 for BTC, BIP-44 for EVM, account index 0). Their public addresses:
+
+| Chain | Address |
+|-------|---------|
+| BTC (BIP-84) | `bc1q4qzrf00t40tnqlc374s07dnnywltz0pt2aqmya` |
+| EVM (BIP-44) | `0xea9A10783EBbb42Bfc0e8fb13b5210A57276d560` |
+
+Fund these to run the live integration suite (`op run --env-file=.env.op -- pnpm exec vitest run tests/integration`) or the swap harness. See [docs/testing.md](./docs/testing.md) for the full setup.
+
 ## 📜 License
 
 Apache-2.0. See [LICENSE](./LICENSE).
