@@ -47,13 +47,13 @@ export interface GetQuoteParamsV3 {
 
 // Discriminated by the present key
 export interface GatewayOrderStatusV3 {
-  InProgress?: {
+  inProgress?: {
     refund_tx?: object | null
     pending_btc_payment?: { txid: string; amount: string } | null
   }
-  Failed?: { refund_tx?: object | null }
-  Success?: { received_tokens: object[] }
-  Refunded?: { refunded_tokens: object[] }
+  failed?: { refund_tx?: object | null }
+  success?: { received_tokens: object[] }
+  refunded?: { refunded_tokens: object[] }
 }
 
 export interface GatewayOrderInfoV3 {

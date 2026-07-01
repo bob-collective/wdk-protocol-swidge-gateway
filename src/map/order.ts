@@ -19,12 +19,12 @@ export interface EvmOrderPayload {
 export type OrderPayload = BtcOrderPayload | EvmOrderPayload
 
 interface OnrampOrder {
-  orderId: string
+  order_id: string
   address: string
 }
 
 interface EvmOrder {
-  orderId: string
+  order_id: string
   tx: { to: string; data: string; value: string }
 }
 
@@ -55,21 +55,21 @@ interface RawQuote {
  */
 export function orderPayload(order: RawOrder, variant: SwidgeVariant, quote?: RawQuote): OrderPayload {
   const o = order[variant] as (OnrampOrder & EvmOrder) | undefined
-  if (!o || !o.orderId) {
+  if (!o || !o.order_id) {
     throw new GatewaySwidgeError(ERR.HTTP, `create-order missing ${variant}.orderId`, {
       cause: order,
     })
   }
   if (variant === 'onramp') {
     return {
-      orderId: o.orderId,
+      orderId: o.order_id,
       kind: 'btc',
       address: o.address,
       amount: BigInt(quote!.onramp!.inputAmount.amount),
     }
   }
   return {
-    orderId: o.orderId,
+    orderId: o.order_id,
     kind: 'evm',
     tx: { to: o.tx.to, data: o.tx.data, value: o.tx.value },
   }

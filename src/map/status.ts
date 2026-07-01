@@ -6,12 +6,12 @@ import type { SwidgeStatusResult } from '@tetherto/wdk-wallet/protocols'
  */
 export function toSwidgeStatus(order: GatewayOrderInfoV3): SwidgeStatusResult {
   const s = order.status || {}
-  if (s.Success) return { status: 'completed', transactions: [] }
-  if (s.Refunded) return { status: 'refunded', transactions: [] }
-  if (s.Failed) return { status: s.Failed.refund_tx ? 'refund-pending' : 'failed', transactions: [] }
-  if (s.InProgress) {
-    if (s.InProgress.refund_tx) return { status: 'refund-pending', transactions: [] }
-    const pending = s.InProgress.pending_btc_payment
+  if (s.success) return { status: 'completed', transactions: [] }
+  if (s.refunded) return { status: 'refunded', transactions: [] }
+  if (s.failed) return { status: s.failed.refund_tx ? 'refund-pending' : 'failed', transactions: [] }
+  if (s.inProgress) {
+    if (s.inProgress.refund_tx) return { status: 'refund-pending', transactions: [] }
+    const pending = s.inProgress.pending_btc_payment
     const transactions = pending ? [{ hash: pending.txid, type: 'source' as const }] : []
     return { status: 'pending', transactions }
   }

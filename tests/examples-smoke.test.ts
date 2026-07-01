@@ -20,14 +20,14 @@ function makeMockHttp() {
       if (url.includes('create-order')) {
         return {
           status: 200,
-          body: { onramp: { orderId: 'o1', address: 'bc1q', inputAmount: { amount: '100000' } } },
+          body: { onramp: { order_id: 'o1', address: 'bc1q', inputAmount: { amount: '100000' } } },
         }
       }
       if (url.includes('register-tx')) {
         return { status: 200, body: {} }
       }
       if (url.includes('get-order')) {
-        return { status: 200, body: { status: { Success: { received_tokens: [] } } } }
+        return { status: 200, body: { status: { success: { received_tokens: [] } } } }
       }
       return { status: 200, body: {} }
     }),
