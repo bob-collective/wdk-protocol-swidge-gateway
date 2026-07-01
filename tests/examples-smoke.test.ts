@@ -1,4 +1,5 @@
 import { describe, test, expect, vi } from 'vitest'
+import { Transaction } from 'bitcoinjs-lib'
 import { run as onrampBase } from '../examples/onramp-btc-to-usdt-base.js'
 import { run as quoteAndStatus } from '../examples/quote-and-status.js'
 
@@ -34,9 +35,10 @@ function makeMockHttp() {
   }
 }
 
+const _btcTx = (() => { const tx = new Transaction(); tx.addInput(Buffer.alloc(32, 0), 0); return tx })()
 const btcAccount = {
   getAddress: async () => 'bc1q',
-  signTransaction: async () => ({ toHex: () => 'hex', getId: () => 'tid' }),
+  signTransaction: async () => _btcTx.toHex(),
 }
 
 describe('examples smoke', () => {

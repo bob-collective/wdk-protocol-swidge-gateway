@@ -1,18 +1,13 @@
 import { Transaction, address as btcAddress, networks } from 'bitcoinjs-lib'
 import { GatewaySwidgeError, ERR } from '../errors.js'
 
-interface BtcTx {
-  toHex(): string
-  getId(): string
-}
-
 interface BtcAccount {
   getAddress(): string | Promise<string>
   signTransaction?: (params: {
     to: string
     value: bigint
     feeRate?: number
-  }) => Promise<BtcTx>
+  }) => Promise<string>
 }
 
 interface BtcPayload {
@@ -43,12 +38,13 @@ export const bitcoinAdapter = {
     if (typeof account.signTransaction !== 'function') {
       throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, 'bitcoin account cannot sign transactions')
     }
-    const tx = await account.signTransaction({
+    const signedTxHex = await account.signTransaction({
       to: payload.address,
       value: payload.amount,
       feeRate: opts.feeRate,
     })
-    return { txid: tx.getId(), hex: tx.toHex() }
+    const txid = Transaction.fromHex(signedTxHex).getId()
+    return { txid, hex: signedTxHex }
   },
 
   /**
@@ -65,15 +61,13 @@ export const bitcoinAdapter = {
     if (typeof account.signTransaction !== 'function') {
       throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, 'bitcoin account cannot sign transactions')
     }
-    const tx = await account.signTransaction({
+    const signedTxHex = await account.signTransaction({
       to: payload.address,
       value: payload.amount,
       feeRate: opts.feeRate,
     })
-    const signedTxHex = tx.toHex()
-    const txid = tx.getId()
-
     const parsed = Transaction.fromHex(signedTxHex)
+    const txid = parsed.getId()
     const targetScript = btcAddress.toOutputScript(payload.address, networks.bitcoin)
     let paidToDeposit = 0n
     for (const out of parsed.outs) {

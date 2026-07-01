@@ -16,7 +16,7 @@ if (!seed) {
   process.exit(1)
 }
 
-const evmRpc = process.env.EVM_RPC_URL ?? 'https://eth.llamarpc.com'
+const evmRpc = process.env.EVM_RPC_URL ?? 'https://ethereum-rpc.publicnode.com'
 
 // Dynamic imports so the WDK managers are only loaded when the seed is present.
 const { default: WalletManagerBtc } = await import('@tetherto/wdk-wallet-btc')

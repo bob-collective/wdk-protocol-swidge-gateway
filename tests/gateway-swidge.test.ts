@@ -1,6 +1,13 @@
 import { describe, test, expect, vi } from 'vitest'
+import { Transaction } from 'bitcoinjs-lib'
 import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
+
+function buildMinimalTxHex(): { hex: string; txid: string } {
+  const tx = new Transaction()
+  tx.addInput(Buffer.alloc(32, 0), 0)
+  return { hex: tx.toHex(), txid: tx.getId() }
+}
 
 function fakeClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
   return {
@@ -19,9 +26,10 @@ function fakeClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
 
 describe('GatewaySwidge', () => {
   test('swidge onramp: quote → createOrder → btc send → register → id', async () => {
+    const { hex, txid } = buildMinimalTxHex()
     const account = {
       getAddress: async () => 'bc1q',
-      signTransaction: async () => ({ toHex: () => 'hex', getId: () => 'btctxid' }),
+      signTransaction: async () => hex,
     }
     const client = fakeClient()
     const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', client })
@@ -33,15 +41,16 @@ describe('GatewaySwidge', () => {
       fromTokenAmount: 100000n,
     })
     expect(client.createOrder).toHaveBeenCalled()
-    expect(client.registerTx).toHaveBeenCalledWith({ onramp: { order_id: 'o1', bitcoin_tx_hex: 'hex' } })
+    expect(client.registerTx).toHaveBeenCalledWith({ onramp: { order_id: 'o1', bitcoin_tx_hex: hex } })
     expect(res.id).toBe('o1')
-    expect(res.hash).toBe('btctxid')
+    expect(res.hash).toBe(txid)
   })
 
   test('swidge onramp: registerTx failure does not throw', async () => {
+    const { hex, txid } = buildMinimalTxHex()
     const account = {
       getAddress: async () => 'bc1q',
-      signTransaction: async () => ({ toHex: () => 'hex', getId: () => 'txid2' }),
+      signTransaction: async () => hex,
     }
     const client = fakeClient({
       registerTx: vi.fn(async () => {
@@ -57,7 +66,7 @@ describe('GatewaySwidge', () => {
       fromTokenAmount: 100000n,
     })
     expect(res.id).toBe('o1')
-    expect(res.hash).toBe('txid2')
+    expect(res.hash).toBe(txid)
   })
 
   test('getSwidgeStatus maps order status', async () => {

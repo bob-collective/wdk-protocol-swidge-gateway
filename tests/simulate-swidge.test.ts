@@ -67,7 +67,7 @@ describe('bitcoinAdapter.simulate()', () => {
     const { hex, txid } = buildTxPayingDeposit(DEPOSIT_ADDR, AMOUNT)
     const account = {
       getAddress: vi.fn(() => 'bc1qtest'),
-      signTransaction: vi.fn(async () => ({ toHex: () => hex, getId: () => txid })),
+      signTransaction: vi.fn(async () => hex),
     }
     const result = await bitcoinAdapter.simulate(account, { address: DEPOSIT_ADDR, amount: AMOUNT }, {})
     expect(account.signTransaction).toHaveBeenCalledWith({ to: DEPOSIT_ADDR, value: AMOUNT, feeRate: undefined })
@@ -79,10 +79,10 @@ describe('bitcoinAdapter.simulate()', () => {
 
   test('valid: false when output underpays deposit address', async () => {
     const lessAmount = AMOUNT - 1n
-    const { hex, txid } = buildTxPayingDeposit(DEPOSIT_ADDR, lessAmount)
+    const { hex } = buildTxPayingDeposit(DEPOSIT_ADDR, lessAmount)
     const account = {
       getAddress: vi.fn(() => 'bc1qtest'),
-      signTransaction: vi.fn(async () => ({ toHex: () => hex, getId: () => txid })),
+      signTransaction: vi.fn(async () => hex),
     }
     const result = await bitcoinAdapter.simulate(account, { address: DEPOSIT_ADDR, amount: AMOUNT }, {})
     expect(result.valid).toBe(false)
@@ -157,10 +157,10 @@ describe('evmAdapter.simulate()', () => {
 
 describe('GatewaySwidge.simulateSwidge()', () => {
   test('onramp simulate: valid, paidToDeposit ≥ amount, registerTx never called', async () => {
-    const { hex, txid } = buildTxPayingDeposit(DEPOSIT_ADDR, AMOUNT)
+    const { hex } = buildTxPayingDeposit(DEPOSIT_ADDR, AMOUNT)
     const account = {
       getAddress: async () => 'bc1qcaller',
-      signTransaction: async () => ({ toHex: () => hex, getId: () => txid }),
+      signTransaction: async () => hex,
     }
     const client = fakeClient()
     const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', client })
