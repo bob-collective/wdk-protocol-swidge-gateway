@@ -1,3 +1,5 @@
+import { GatewaySwidgeError, ERR } from '../errors.js'
+
 const ZERO = '0x0000000000000000000000000000000000000000'
 
 /**
@@ -31,7 +33,16 @@ interface EvmPayload {
 interface EvmAccount {
   getAllowance?: (token: string, spender: string) => Promise<bigint>
   sendTransaction: (txOrArray: EvmTx | EvmTx[], config?: unknown) => Promise<{ hash: string }>
+  quoteSendTransaction?: (tx: EvmTx) => Promise<{ fee?: bigint; gas?: bigint }>
   [key: string]: unknown
+}
+
+export interface EvmSimulateResult {
+  tx: EvmTx
+  gasEstimate: bigint | null
+  requiredApproval: { token: string; spender: string; amount: bigint } | null
+  valid: boolean
+  reason?: string
 }
 
 export const evmAdapter = {
@@ -69,5 +80,36 @@ export const evmAdapter = {
       ? await account.sendTransaction([tx], opts.aaConfig)
       : await account.sendTransaction(tx)
     return { txid: result.hash }
+  },
+
+  /**
+   * Dry-run the EVM transaction via `quoteSendTransaction` (estimates gas / reverts if invalid)
+   * without broadcasting. Also computes required token approval if token/amount are supplied.
+   *
+   * Never throws on a simulation revert — returns `valid: false` with `reason` instead.
+   * Throws `NOT_SUPPORTED` only when the account lacks `quoteSendTransaction` entirely.
+   */
+  async simulate(
+    account: EvmAccount,
+    payload: EvmPayload,
+    opts: { token?: string; spender?: string; amount?: bigint | string | number } = {}
+  ): Promise<EvmSimulateResult> {
+    if (typeof account.quoteSendTransaction !== 'function') {
+      throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, 'evm account does not support quoteSendTransaction')
+    }
+    const spender = opts.spender ?? payload.tx.to
+    const requiredApproval =
+      opts.token != null && opts.amount != null
+        ? await this.getRequiredApproval(account, opts.token, spender, opts.amount)
+        : null
+
+    try {
+      const result = await account.quoteSendTransaction(payload.tx)
+      const gasEstimate = result.fee ?? result.gas ?? null
+      return { tx: payload.tx, gasEstimate, requiredApproval, valid: true }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      return { tx: payload.tx, gasEstimate: null, requiredApproval, valid: false, reason }
+    }
   },
 }

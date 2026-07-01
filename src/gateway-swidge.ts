@@ -13,6 +13,7 @@ import { GatewayClient } from './gateway-client.js'
 import type { GatewayClientConfig } from './gateway-client.js'
 import { getAdapter } from './chain-adapters/registry.js'
 import { evmAdapter } from './chain-adapters/evm.js'
+import { bitcoinAdapter } from './chain-adapters/bitcoin.js'
 import { chainFamily, detectVariant } from './chains.js'
 import { toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
@@ -21,6 +22,7 @@ import { toSwidgeStatus } from './map/status.js'
 import { toSupportedChains, toSupportedTokens } from './map/routes.js'
 import { orderPayload } from './map/order.js'
 import type { BtcOrderPayload, EvmOrderPayload } from './map/order.js'
+import type { SwidgeSimulation } from './types.js'
 
 const DEFAULT_SLIPPAGE = 0.03
 const BOB_API_KEY = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
@@ -203,6 +205,63 @@ export class GatewaySwidge extends SwidgeProtocol {
       await this._client.registerTx(body)
     } catch {
       /* best-effort; order reconciles later */
+    }
+  }
+
+  /**
+   * Validate a swidge short of broadcasting.
+   *
+   * Follows the same setup as `swidge()` up through building the payload, then calls the
+   * adapter's `simulate()` instead of `send()`. The Gateway order created here is orphaned
+   * (no registerTx call, no broadcast) — the gateway reconciles orphaned orders automatically.
+   *
+   * Returns a `SwidgeSimulation` describing the dry-run result, including validity and gas/fee
+   * estimates. `broadcast` is always `false`.
+   */
+  async simulateSwidge(options: SwidgeOptions & { fromChain?: string }): Promise<SwidgeSimulation> {
+    const { params, variant, srcFamily } = await this._buildQuoteParams(options)
+    const quote = await this._client.getQuote(params)
+    const order = await this._client.createOrder({ [variant]: (quote as Record<string, unknown>)[variant] })
+    const payload = orderPayload(
+      order as Record<string, unknown>,
+      variant,
+      quote as Record<string, unknown>
+    )
+    const adapter = getAdapter(srcFamily)
+    const sq = toSwidgeQuote(quote as Record<string, unknown>, { affiliateApplied: params.affiliates !== undefined })
+
+    if (payload.kind === 'btc') {
+      const btcPayload = payload as BtcOrderPayload
+      const simResult = await (adapter as typeof bitcoinAdapter).simulate(
+        this._account,
+        { ...btcPayload },
+        { feeRate: this._feeRate }
+      )
+      return {
+        variant,
+        orderId: payload.orderId,
+        quote: sq as unknown as Record<string, unknown>,
+        broadcast: false,
+        onramp: simResult,
+      }
+    } else {
+      const evmPayload = payload as EvmOrderPayload
+      const simResult = await (adapter as typeof evmAdapter).simulate(
+        this._account,
+        { ...evmPayload },
+        {
+          token: (options as { fromToken?: string }).fromToken,
+          spender: evmPayload.tx.to,
+          amount: options.fromTokenAmount,
+        }
+      )
+      return {
+        variant,
+        orderId: payload.orderId,
+        quote: sq as unknown as Record<string, unknown>,
+        broadcast: false,
+        evm: simResult,
+      }
     }
   }
 

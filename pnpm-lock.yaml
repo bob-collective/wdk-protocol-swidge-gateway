@@ -14,6 +14,9 @@ importers:
       bare-node-runtime:
         specifier: '*'
         version: 1.5.0(bare-pipe@4.2.2(bare-abort-controller@1.1.2)(bare-buffer@3.6.1))(bare-tcp@2.5.1(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)(bare-pipe@4.2.2(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)))
+      bitcoinjs-lib:
+        specifier: 6.1.7
+        version: 6.1.7
       ethers:
         specifier: ^6
         version: 6.17.0
