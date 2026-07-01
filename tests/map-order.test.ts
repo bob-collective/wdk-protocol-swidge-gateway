@@ -4,7 +4,7 @@ import { GatewaySwidgeError, ERR } from '../src/errors.js'
 
 describe('orderPayload', () => {
   test('onramp: extracts orderId, address, and amount from quote', () => {
-    const order = { onramp: { orderId: 'o1', address: 'bc1q' } }
+    const order = { onramp: { order_id: 'o1', address: 'bc1q' } }
     const quote = { onramp: { inputAmount: { amount: '100000' } } }
     expect(orderPayload(order, 'onramp', quote)).toEqual({
       orderId: 'o1',
@@ -15,7 +15,7 @@ describe('orderPayload', () => {
   })
 
   test('offramp: extracts orderId and tx fields', () => {
-    const order = { offramp: { orderId: 'o2', tx: { to: '0xto', data: '0xdata', value: '0' } } }
+    const order = { offramp: { order_id: 'o2', tx: { to: '0xto', data: '0xdata', value: '0' } } }
     expect(orderPayload(order, 'offramp')).toEqual({
       orderId: 'o2',
       kind: 'evm',
@@ -24,7 +24,7 @@ describe('orderPayload', () => {
   })
 
   test('tokenSwap: extracts orderId and tx fields', () => {
-    const order = { tokenSwap: { orderId: 'o3', tx: { to: '0xto2', data: '0xdata2', value: '1' } } }
+    const order = { tokenSwap: { order_id: 'o3', tx: { to: '0xto2', data: '0xdata2', value: '1' } } }
     expect(orderPayload(order, 'tokenSwap')).toEqual({
       orderId: 'o3',
       kind: 'evm',

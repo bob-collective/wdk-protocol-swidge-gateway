@@ -8,10 +8,10 @@ function fakeClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
       onramp: { inputAmount: { amount: '100000' }, outputAmount: { amount: '99000' }, fees: {} },
     })),
     createOrder: vi.fn(async () => ({
-      onramp: { orderId: 'o1', address: 'bc1q', inputAmount: { amount: '100000' } },
+      onramp: { order_id: 'o1', address: 'bc1q', inputAmount: { amount: '100000' } },
     })),
     registerTx: vi.fn(async () => ({})),
-    getOrder: vi.fn(async () => ({ status: { Success: { received_tokens: [] } } })),
+    getOrder: vi.fn(async () => ({ status: { success: { received_tokens: [] } } })),
     getRoutes: vi.fn(async () => []),
     ...overrides,
   } as unknown as GatewayClient
@@ -33,7 +33,7 @@ describe('GatewaySwidge', () => {
       fromTokenAmount: 100000n,
     })
     expect(client.createOrder).toHaveBeenCalled()
-    expect(client.registerTx).toHaveBeenCalledWith({ onramp: { orderId: 'o1', bitcoinTxHex: 'hex' } })
+    expect(client.registerTx).toHaveBeenCalledWith({ onramp: { order_id: 'o1', bitcoin_tx_hex: 'hex' } })
     expect(res.id).toBe('o1')
     expect(res.hash).toBe('btctxid')
   })
@@ -102,7 +102,7 @@ describe('GatewaySwidge', () => {
         offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, srcChain: 'bob' },
       })) as unknown as GatewayClient['getQuote'],
       createOrder: vi.fn(async () => ({
-        offramp: { orderId: 'o2', tx: { to: '0xto', data: '0xdata', value: '0' } },
+        offramp: { order_id: 'o2', tx: { to: '0xto', data: '0xdata', value: '0' } },
       })) as unknown as GatewayClient['createOrder'],
     })
     const account = {
@@ -118,7 +118,7 @@ describe('GatewaySwidge', () => {
       fromTokenAmount: 1000n,
     })
     expect(evmClient.registerTx).toHaveBeenCalledWith({
-      offramp: { orderId: 'o2', srcTxHash: '0xtxhash', srcChain: 'bob' },
+      offramp: { order_id: 'o2', src_tx_hash: '0xtxhash', src_chain: 'bob' },
     })
     expect(res.id).toBe('o2')
     expect(res.hash).toBe('0xtxhash')
@@ -130,7 +130,7 @@ describe('GatewaySwidge', () => {
         offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' } },
       })) as unknown as GatewayClient['getQuote'],
       createOrder: vi.fn(async () => ({
-        offramp: { orderId: 'o2b', tx: { to: '0xto', data: '0xdata', value: '0' } },
+        offramp: { order_id: 'o2b', tx: { to: '0xto', data: '0xdata', value: '0' } },
       })) as unknown as GatewayClient['createOrder'],
     })
     const account = {
@@ -146,7 +146,7 @@ describe('GatewaySwidge', () => {
       fromTokenAmount: 1000n,
     })
     expect(evmClient.registerTx).toHaveBeenCalledWith({
-      offramp: { orderId: 'o2b', srcTxHash: '0xtxhash2', srcChain: 'base' },
+      offramp: { order_id: 'o2b', src_tx_hash: '0xtxhash2', src_chain: 'base' },
     })
   })
 
@@ -156,7 +156,7 @@ describe('GatewaySwidge', () => {
         offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, fees: {} },
       })) as unknown as GatewayClient['getQuote'],
       createOrder: vi.fn(async () => ({
-        offramp: { orderId: 'o3', tx: { to: '0xspender', data: '0xdata', value: '0' } },
+        offramp: { order_id: 'o3', tx: { to: '0xspender', data: '0xdata', value: '0' } },
       })) as unknown as GatewayClient['createOrder'],
     })
     const account = {

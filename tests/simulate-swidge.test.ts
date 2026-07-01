@@ -36,10 +36,10 @@ function fakeClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
       onramp: { inputAmount: { amount: '100000' }, outputAmount: { amount: '99000' }, fees: {} },
     })),
     createOrder: vi.fn(async () => ({
-      onramp: { orderId: 'sim-order-1', address: DEPOSIT_ADDR, inputAmount: { amount: '100000' } },
+      onramp: { order_id: 'sim-order-1', address: DEPOSIT_ADDR, inputAmount: { amount: '100000' } },
     })),
     registerTx: vi.fn(async () => ({})),
-    getOrder: vi.fn(async () => ({ status: { Success: { received_tokens: [] } } })),
+    getOrder: vi.fn(async () => ({ status: { success: { received_tokens: [] } } })),
     getRoutes: vi.fn(async () => []),
     ...overrides,
   } as unknown as GatewayClient
@@ -51,10 +51,10 @@ function fakeEvmClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
       offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, fees: {} },
     })),
     createOrder: vi.fn(async () => ({
-      offramp: { orderId: 'sim-order-evm', tx: { to: '0xspender', data: '0xdata', value: '0' } },
+      offramp: { order_id: 'sim-order-evm', tx: { to: '0xspender', data: '0xdata', value: '0' } },
     })),
     registerTx: vi.fn(async () => ({})),
-    getOrder: vi.fn(async () => ({ status: { Success: { received_tokens: [] } } })),
+    getOrder: vi.fn(async () => ({ status: { success: { received_tokens: [] } } })),
     getRoutes: vi.fn(async () => []),
     ...overrides,
   } as unknown as GatewayClient

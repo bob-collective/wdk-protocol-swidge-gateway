@@ -156,7 +156,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       const { txid: id, hex } = await (
         adapter as typeof import('./chain-adapters/bitcoin.js').bitcoinAdapter
       ).send(this._account, { ...btcPayload }, { feeRate: this._feeRate })
-      await this._registerBestEffort({ onramp: { orderId: payload.orderId, bitcoinTxHex: hex } })
+      await this._registerBestEffort({ onramp: { order_id: payload.orderId, bitcoin_tx_hex: hex } })
       txid = id
     } else {
       const evmPayload = payload as EvmOrderPayload
@@ -170,9 +170,9 @@ export class GatewaySwidge extends SwidgeProtocol {
         | undefined
       await this._registerBestEffort({
         [variant]: {
-          orderId: payload.orderId,
-          srcTxHash: sent.txid,
-          srcChain: (quoteVariant && quoteVariant.srcChain) || fromChain,
+          order_id: payload.orderId,
+          src_tx_hash: sent.txid,
+          src_chain: (quoteVariant && quoteVariant.srcChain) || fromChain,
         },
       })
       txid = sent.txid
