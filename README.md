@@ -10,7 +10,7 @@ The Wallet Development Kit (WDK) is a modular framework for building non-custodi
 - **BTC → Tron**: Send BTC and receive USDT (or other tokens) on Tron (destination only in v1; see [Tron-as-source tracking issue](https://github.com/tetherto/wdk-wallet-tron/issues/48)).
 - **EVM ↔ EVM**: Same-chain swaps and cross-chain bridges via the inherited `swap()` / `bridge()` methods.
 - **Affiliate fees**: Earn revenue on BTC ↔ EVM routes with configurable per-address basis-point fees.
-- **Zero-config attribution**: The default `apiKey` attributes gateway-wdk volume to BOB at 0 fee.
+- **Zero-config attribution**: The default `bearerToken` attributes gateway-wdk volume to BOB at 0 fee.
 - **Non-custodial**: Keys never leave the WDK account. Signing is fully delegated.
 - **Multi-runtime**: Works on Node.js, Bare (`bare.js`), and React Native out of the box.
 
@@ -186,7 +186,7 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 |-----------|------|-------------|
 | `account` | `object` | WDK wallet account (BTC or EVM). |
 | `config.apiUrl` | `string?` | Gateway API base URL. |
-| `config.apiKey` | `string?` | API key. Defaults to BOB's gateway-wdk attribution key (0 fee, attributes volume to BOB). |
+| `config.bearerToken` | `string?` | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee, attributes volume to BOB). |
 | `config.http` | `object?` | Injectable HTTP transport (useful for testing). |
 | `config.affiliates` | `Array<{address: string, bps: number}>?` | Affiliate fee entries. |
 | `config.paymasterToken` | `string?` | ERC-20 paymaster token for AA accounts. |
@@ -272,7 +272,7 @@ Returns the ERC-20 approval the caller must grant before executing an offramp or
 - **Keys never leave the WDK account.** All signing is delegated to the account abstraction layer — `GatewaySwidge` never has direct key access.
 - **No external wallet dependencies.** This package does not depend on `viem`, `@gobob/bob-sdk`, or any other wallet library.
 - **Approval hygiene.** For offramp/tokenSwap routes, call `getRequiredApproval()` first and approve only the exact required amount. Do not pre-approve unlimited amounts.
-- **BOB attribution key.** The default `apiKey` is a shared gateway-wdk attribution token that attributes volume to BOB at 0 cost. Replace it with your own key only if you have a direct API agreement.
+- **BOB attribution key.** The default `bearerToken` is a shared gateway-wdk attribution token that attributes volume to BOB at 0 cost. Replace it with your own key only if you have a direct API agreement.
 
 ## 🛠️ Development
 

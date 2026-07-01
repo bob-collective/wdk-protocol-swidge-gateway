@@ -23,7 +23,7 @@ Keys never leave the WDK account. `GatewaySwidge` delegates all signing to the a
 
 ### BOB Attribution
 
-The default `apiKey` is BOB's gateway-wdk attribution token. It attributes gateway-wdk swap volume to BOB at 0 cost to you or your users. This is separate from affiliate fees.
+The default `bearerToken` is BOB's gateway-wdk attribution token. It attributes gateway-wdk swap volume to BOB at 0 cost to you or your users. This is separate from affiliate fees.
 
 ### Affiliate Fees
 

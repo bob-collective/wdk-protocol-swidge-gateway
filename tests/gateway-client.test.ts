@@ -7,7 +7,7 @@ const transport = (impl: HttpTransport['request']): HttpTransport => ({ request:
 describe('GatewayClient', () => {
   test('getQuote hits /v3/get-quote with bearer + query', async () => {
     const t = transport(async () => ({ status: 200, body: { onramp: {} } }))
-    const c = new GatewayClient({ apiUrl: 'https://api', apiKey: 'k'.repeat(32), http: t })
+    const c = new GatewayClient({ apiUrl: 'https://api', bearerToken: 'k'.repeat(32), http: t })
     await c.getQuote({ srcChain: 'bitcoin', amount: '1000' })
     expect(t.request).toHaveBeenCalledWith(
       'GET',
