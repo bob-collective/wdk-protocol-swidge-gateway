@@ -1,5 +1,17 @@
 import { GatewaySwidgeError, ERR } from '../errors.js'
 
+export const BTC_ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
+
+/**
+ * Normalise a token identifier for the gateway API.
+ * The gateway represents native BTC as the zero-address; callers may pass the
+ * ergonomic string `'BTC'` (case-insensitive), which is normalised here so
+ * the raw zero-address and the readable identifier both work.
+ */
+export function resolveTokenId(token: string): string {
+  return token && token.toLowerCase() === 'btc' ? BTC_ZERO_ADDRESS : token
+}
+
 const MAX_AFFILIATES = 5
 const MAX_TOTAL_BPS = 1000
 
@@ -55,8 +67,8 @@ export function toQuoteParams(
   const params: Record<string, string | undefined> = {
     srcChain: options.fromChain,
     dstChain: options.toChain ?? options.fromChain,
-    srcToken: options.fromToken,
-    dstToken: options.toToken,
+    srcToken: resolveTokenId(options.fromToken),
+    dstToken: resolveTokenId(options.toToken),
     amount: String(options.fromTokenAmount),
     slippage: String(Math.round(slippage * 10000)),
     recipient: options.recipient,

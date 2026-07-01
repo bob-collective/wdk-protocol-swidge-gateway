@@ -175,7 +175,7 @@ console.log(status.status, status.transactions)
 ### Exports
 
 ```js
-import { GatewaySwidge, GatewayClient, GatewaySwidgeError, ERR } from '@gobob/wdk-protocol-swidge-gateway'
+import { GatewaySwidge, GatewayClient, GatewaySwidgeError, ERR, BTC } from '@gobob/wdk-protocol-swidge-gateway'
 // Default export:
 import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 ```
@@ -198,8 +198,8 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `fromToken` | `string` | Yes | Source token symbol (`'BTC'`) or ERC-20 address. |
-| `toToken` | `string` | Yes | Destination token symbol or address. |
+| `fromToken` | `string` | Yes | Source token: pass `'BTC'` (or the exported `BTC` constant) for Bitcoin — normalised internally to the gateway's native-token zero-address. ERC-20/TRC-20 tokens are passed as their contract address. |
+| `toToken` | `string` | Yes | Destination token: pass `'BTC'` (or `BTC` constant) for Bitcoin, or a contract address for ERC-20/TRC-20 tokens. |
 | `toChain` | `string` | Yes | Destination chain id (e.g. `'base'`, `'bitcoin'`, `'tron'`). |
 | `recipient` | `string` | Yes | Recipient address on the destination chain. |
 | `fromTokenAmount` | `bigint` | Yes | Amount to send (in the token's smallest unit). |
