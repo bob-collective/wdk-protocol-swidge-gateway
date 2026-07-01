@@ -1,0 +1,38 @@
+name: WDK Gateway — validate (quote + simulate, no swap)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 7 * * *'
+
+jobs:
+  validate:
+    name: Validate quote + simulate (mainnet, no swap)
+    runs-on: bob-ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v3
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          TEST_SEED: op://WDK Gateway/test-seed/password
+          EVM_RPC_URL: op://WDK Gateway/rpc-ethereum/password
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      - name: Run integration suite
+        run: pnpm exec vitest run tests/integration

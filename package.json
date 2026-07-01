@@ -21,7 +21,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "derive-addresses": "tsx scripts/derive-addresses.ts"
   },
   "dependencies": {
     "@tetherto/wdk-wallet": "1.0.0-beta.12",
@@ -44,6 +45,7 @@
     "eslint": "^9",
     "eslint-config-prettier": "^10",
     "prettier": "^3",
+    "tsx": "^4.22.4",
     "typescript": "^5",
     "vitest": "^2"
   },
