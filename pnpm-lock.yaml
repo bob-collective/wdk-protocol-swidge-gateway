@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@tetherto/wdk-wallet':
-        specifier: '*'
+        specifier: 1.0.0-beta.12
         version: 1.0.0-beta.12(bare-pipe@4.2.2(bare-abort-controller@1.1.2)(bare-buffer@3.6.1))(bare-tcp@2.5.1(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)(bare-pipe@4.2.2(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)))
       bare-node-runtime:
         specifier: '*'
@@ -22,13 +22,13 @@ importers:
         version: 6.4.0
     devDependencies:
       '@tetherto/wdk-wallet-btc':
-        specifier: '*'
+        specifier: 1.0.0-beta.10
         version: 1.0.0-beta.10(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)(bare-events@2.9.1(bare-abort-controller@1.1.2))(bare-pipe@4.2.2(bare-abort-controller@1.1.2)(bare-buffer@3.6.1))(bare-tcp@2.5.1(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)(bare-pipe@4.2.2(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)))(bare-url@2.4.5)
       '@tetherto/wdk-wallet-evm':
-        specifier: '*'
+        specifier: 1.0.0-beta.14
         version: 1.0.0-beta.14(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)(bare-events@2.9.1(bare-abort-controller@1.1.2))(bare-pipe@4.2.2(bare-abort-controller@1.1.2)(bare-buffer@3.6.1))(bare-tcp@2.5.1(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)(bare-pipe@4.2.2(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)))(bare-url@2.4.5)
       '@tetherto/wdk-wallet-evm-erc-4337':
-        specifier: '*'
+        specifier: 1.0.0-beta.10
         version: 1.0.0-beta.10(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)(bare-events@2.9.1(bare-abort-controller@1.1.2))(bare-pipe@4.2.2(bare-abort-controller@1.1.2)(bare-buffer@3.6.1))(bare-tcp@2.5.1(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)(bare-pipe@4.2.2(bare-abort-controller@1.1.2)(bare-buffer@3.6.1)))(bare-url@2.4.5)
       cross-env:
         specifier: ^7
