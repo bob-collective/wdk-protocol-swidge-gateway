@@ -3,10 +3,12 @@
 ## Exports
 
 ```js
-import { GatewaySwidge, GatewayClient, GatewaySwidgeError, ERR } from '@gobob/wdk-protocol-swidge-gateway'
+import { GatewaySwidge, GatewayClient, GatewaySwidgeError, ERR, BTC } from '@gobob/wdk-protocol-swidge-gateway'
 // Default export:
 import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 ```
+
+`BTC` — exported string constant `'BTC'`. Use it as `fromToken` or `toToken` for Bitcoin routes. Normalised internally to the gateway's native-token zero-address (`0x000...0`); ERC-20/TRC-20 tokens are passed as their contract address.
 
 ## `GatewaySwidge`
 
@@ -36,8 +38,8 @@ Passed to `quoteSwidge()`, `swidge()`, and `getRequiredApproval()`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `fromToken` | `string` | Yes | Source token: `'BTC'` or an ERC-20/TRC-20 contract address. |
-| `toToken` | `string` | Yes | Destination token: `'BTC'` or a contract address. |
+| `fromToken` | `string` | Yes | Source token: pass `'BTC'` (or the exported `BTC` constant) for Bitcoin — normalised internally to the gateway's native-token zero-address. ERC-20/TRC-20 tokens are passed as their contract address. |
+| `toToken` | `string` | Yes | Destination token: pass `'BTC'` (or `BTC` constant) for Bitcoin, or a contract address for ERC-20/TRC-20 tokens. |
 | `toChain` | `string` | Yes | Destination chain id (e.g. `'base'`, `'bitcoin'`, `'tron'`). |
 | `recipient` | `string` | Yes | Recipient address on the destination chain. |
 | `fromTokenAmount` | `bigint` | Yes | Amount to send in the token's smallest unit (satoshis for BTC). |

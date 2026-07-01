@@ -25,7 +25,6 @@ const PHASE = process.env.PHASE
 const AMOUNT = process.env.AMOUNT
 const ORDER_ID = process.env.ORDER_ID
 
-const BTC_ZERO = '0x0000000000000000000000000000000000000000'
 const USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
 
 if (!TEST_SEED) {
@@ -67,7 +66,7 @@ if (PHASE === 'onramp') {
   try {
     const sw = new GatewaySwidge(btcAccount, { fromChain: 'bitcoin' })
     const r = await sw.swidge({
-      fromToken: BTC_ZERO,
+      fromToken: 'BTC',
       toToken: USDT,
       toChain: 'ethereum',
       recipient: evmAddress,
@@ -101,7 +100,7 @@ if (PHASE === 'offramp') {
     const sw = new GatewaySwidge(evmAccount, { fromChain: 'ethereum' })
     const opts = {
       fromToken: USDT,
-      toToken: BTC_ZERO,
+      toToken: 'BTC',
       toChain: 'bitcoin',
       recipient: btcAddress,
       fromTokenAmount: BigInt(AMOUNT),
