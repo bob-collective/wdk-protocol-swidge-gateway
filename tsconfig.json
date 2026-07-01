@@ -1,14 +1,15 @@
 {
   "compilerOptions": {
-    "allowJs": true,
-    "declaration": true,
-    "emitDeclarationOnly": true,
-    "outDir": "types",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "ES2022",
+    "outDir": "dist",
+    "rootDir": "src",
+    "declaration": true,
+    "strict": true,
     "skipLibCheck": true,
+    "esModuleInterop": true,
     "stripInternal": true
   },
-  "include": ["index.js", "src/**/*.js"]
+  "include": ["src"]
 }
