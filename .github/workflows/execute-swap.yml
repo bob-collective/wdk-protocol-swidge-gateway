@@ -30,7 +30,7 @@ on:
 jobs:
   execute-swap:
     name: Execute real swap (${{ github.event.inputs.phase }})
-    runs-on: bob-ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
