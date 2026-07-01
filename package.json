@@ -13,6 +13,7 @@
     "build:types": "tsc",
     "lint": "standard",
     "lint:fix": "standard --fix",
+    "preflight": "node scripts/preflight.js",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --passWithNoTests",
     "test:coverage": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --coverage --passWithNoTests"
   },
@@ -28,6 +29,9 @@
     "@tetherto/wdk-wallet-evm-erc-4337": "*"
   },
   "devDependencies": {
+    "@tetherto/wdk-wallet-btc": "*",
+    "@tetherto/wdk-wallet-evm": "*",
+    "@tetherto/wdk-wallet-evm-erc-4337": "*",
     "cross-env": "^7",
     "jest": "^29",
     "standard": "^17",
