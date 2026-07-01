@@ -1,7 +1,5 @@
 import { describe, test, expect, vi } from 'vitest'
-// @ts-expect-error: examples are plain JS files
 import { run as onrampBase } from '../examples/onramp-btc-to-usdt-base.js'
-// @ts-expect-error: examples are plain JS files
 import { run as quoteAndStatus } from '../examples/quote-and-status.js'
 
 function makeMockHttp() {

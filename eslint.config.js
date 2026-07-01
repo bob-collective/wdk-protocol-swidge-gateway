@@ -10,14 +10,13 @@ export default [
       'coverage/**',
       'bare.js',
       'index.js',
-      'examples/**',
       'scripts/**',
       'tests/**/*.js',
       'tests/integration/**/*.js',
     ],
   },
   {
-    files: ['src/**/*.ts', 'tests/**/*.ts', 'vitest.config.ts'],
+    files: ['src/**/*.ts', 'tests/**/*.ts', 'examples/**/*.ts', 'vitest.config.ts'],
     languageOptions: {
       parser: tsparser,
       parserOptions: {

@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { GatewaySwidge, GatewayClient } from '../index.js'
+import { GatewaySwidge, GatewayClient } from '../src/index.js'
 
 describe('bare smoke', () => {
   test('constructs with injected http (no global fetch needed)', () => {

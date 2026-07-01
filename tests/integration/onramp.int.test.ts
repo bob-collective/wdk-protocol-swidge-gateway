@@ -1,7 +1,7 @@
 const RUN = process.env.GATEWAY_INT === '1'
 ;(RUN ? describe : describe.skip)('gateway integration (testnet)', () => {
   test('quoteSwidge returns a live quote', async () => {
-    const { GatewaySwidge } = await import('../../index.js')
+    const { GatewaySwidge } = await import('../../src/index.js')
     const sw = new GatewaySwidge(
       {},
       { apiUrl: process.env.GATEWAY_TEST_URL, fromChain: 'bitcoin' }

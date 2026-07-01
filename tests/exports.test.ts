@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import Gw, { GatewaySwidge, GatewayClient, GatewaySwidgeError } from '../index.js'
+import Gw, { GatewaySwidge, GatewayClient, GatewaySwidgeError } from '../src/index.js'
 
 describe('exports surface', () => {
   test('default export is GatewaySwidge', () => {
