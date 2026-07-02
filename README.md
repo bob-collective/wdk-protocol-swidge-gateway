@@ -1,12 +1,14 @@
 # @gobob/wdk-protocol-swidge-gateway
 
+Native BTC ⇄ token swaps and bridges for the Tether **Wallet Development Kit (WDK)** — powered by [BOB Gateway](https://gobob.xyz). Real BTC, no wrappers, no custodians; keys never leave the WDK account.
+
 ## 🔍 About WDK
 
 The Wallet Development Kit (WDK) is a modular framework for building non-custodial wallets that work across Bitcoin, EVM chains, Tron, and more. Protocol modules like this one plug into a WDK account to add specific cross-chain capabilities without requiring private-key exposure.
 
 ## 🌟 Features
 
-- **Native BTC ↔ EVM**: Bidirectional swidge between Bitcoin and any supported EVM chain.
+- **Native BTC ↔ EVM**: Bidirectional swidge — swap BTC ⇄ **USDT, USDC, ETH, wBTC, cbBTC, XAUT** across **Ethereum, Base, Arbitrum, BSC** and more.
 - **BTC → Tron**: Send BTC and receive USDT (or other tokens) on Tron (destination only in v1; see [Tron-as-source tracking issue](https://github.com/tetherto/wdk-wallet-tron/issues/48)).
 - **EVM ↔ EVM**: Same-chain swaps and cross-chain bridges via the inherited `swap()` / `bridge()` methods.
 - **Affiliate fees**: Earn revenue on BTC ↔ EVM routes with configurable per-address basis-point fees.

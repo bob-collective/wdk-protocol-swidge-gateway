@@ -1,0 +1,61 @@
+name: NPM Publish
+
+# Publishes @gobob/wdk-protocol-swidge-gateway to npm on a version tag push (e.g. v0.1.0).
+# Uses npm OIDC trusted publishing (id-token) — configure the trusted publisher for this
+# package + workflow on npmjs.com, or add an NPM_TOKEN. Provenance is set in package.json.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test
+
+      - name: Resolve package version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if this version is already published
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if npm view "@gobob/wdk-protocol-swidge-gateway@$VERSION" version &>/dev/null; then
+            echo "Version $VERSION already on npm — skipping publish."
+            echo "PUBLISH=false" >> "$GITHUB_ENV"
+          else
+            echo "PUBLISH=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Publish to npm
+        if: env.PUBLISH == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ "$VERSION" == *-* ]]; then
+            npm publish --access public --tag next
+          else
+            npm publish --access public
+          fi
