@@ -2,34 +2,37 @@ name: NPM Publish
 
 # Publishes @gobob/wdk-protocol-swidge-gateway to npm on a version tag push (e.g. v0.1.0).
 # Uses npm OIDC trusted publishing (id-token) — configure the trusted publisher for this
-# package + workflow on npmjs.com, or add an NPM_TOKEN. Provenance is set in package.json.
+# package + workflow on npmjs.com. Provenance is set in package.json.
 
 on:
   push:
     tags:
       - 'v*'
 
-permissions:
-  id-token: write
-  contents: read
+permissions: {}
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-          cache: 'pnpm'
+          persist-credentials: false
 
-      # OIDC trusted publishing + provenance requires npm >= 11.5.1.
-      - run: npm install -g npm@latest
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
