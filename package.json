@@ -1,8 +1,49 @@
 {
   "name": "@gobob/wdk-protocol-swidge-gateway",
-  "version": "0.0.1",
-  "description": "BOB Gateway swidge module for the Tether Wallet Development Kit — native BTC ⇄ token routes.",
+  "version": "0.1.0",
+  "description": "Swap native BTC ⇄ USDT, USDC, ETH, wBTC, cbBTC, XAUT across Bitcoin, Ethereum, Base, Arbitrum, BSC, Tron & more — BOB Gateway swidge module for the Tether Wallet Development Kit (WDK).",
   "type": "module",
+  "author": "BOB",
+  "homepage": "https://github.com/bob-collective/wdk-protocol-swidge-gateway#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bob-collective/wdk-protocol-swidge-gateway.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bob-collective/wdk-protocol-swidge-gateway/issues"
+  },
+  "keywords": [
+    "bitcoin",
+    "btc",
+    "usdt",
+    "usdc",
+    "eth",
+    "wbtc",
+    "cbbtc",
+    "xaut",
+    "stablecoin",
+    "swap",
+    "bridge",
+    "swidge",
+    "cross-chain",
+    "onramp",
+    "offramp",
+    "ethereum",
+    "base",
+    "arbitrum",
+    "bsc",
+    "tron",
+    "wdk",
+    "wdk-module",
+    "tether",
+    "bob",
+    "bob-gateway",
+    "self-custody"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "packageManager": "pnpm@10.34.4",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
