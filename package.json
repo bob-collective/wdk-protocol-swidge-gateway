@@ -71,6 +71,7 @@
     "execute-swap": "tsx scripts/execute-swap.ts"
   },
   "dependencies": {
+    "@bitcoinerlab/secp256k1": "1.2.0",
     "bare-node-runtime": "*",
     "bitcoinjs-lib": "6.1.7",
     "ethers": "^6",
