@@ -18,20 +18,47 @@ The Wallet Development Kit (WDK) is a modular framework for building non-custodi
 
 ## ⬇️ Installation
 
+`@tetherto/wdk-wallet` is a **peer** dependency — the module must extend the exact same `SwidgeProtocol`
+base class your WDK core resolves, or `registerProtocol` will silently ignore it.
+
 ```bash
-pnpm add @gobob/wdk-protocol-swidge-gateway
+pnpm add @gobob/wdk-protocol-swidge-gateway @tetherto/wdk-wallet
+```
+
+Then install WDK core plus the wallet modules for the chains you support:
+
+```bash
+pnpm add @tetherto/wdk @tetherto/wdk-wallet-btc @tetherto/wdk-wallet-evm
 ```
 
 ## 🚀 Quick Start
 
 ### Option 1 — With WDK Core (recommended)
 
-```js
-import WDK from '@tetherto/wdk-wallet'
-import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
+Register the module against a source chain, then pull it off the account by label.
 
-const account = await WDK.create({ ... })
-const sw = new GatewaySwidge(account, { fromChain: 'bitcoin' })
+```js
+import WDK from '@tetherto/wdk'
+import WalletManagerBtc from '@tetherto/wdk-wallet-btc'
+import WalletManagerEvm from '@tetherto/wdk-wallet-evm'
+import { GatewaySwidge } from '@gobob/wdk-protocol-swidge-gateway'
+
+const wdk = new WDK(seedPhrase)
+  .registerWallet('bitcoin', WalletManagerBtc, {
+    network: 'bitcoin',
+    client: {
+      type: 'electrum',
+      clientConfig: { host: 'electrum.blockstream.info', port: 50001 }
+    }
+  })
+  .registerWallet('ethereum', WalletManagerEvm, {
+    chainId: 1,
+    provider: process.env.ETHEREUM_RPC_URL
+  })
+  .registerProtocol('bitcoin', 'gateway', GatewaySwidge, { fromChain: 'bitcoin' })
+
+const btcAccount = await wdk.getAccount('bitcoin', 0)
+const sw = btcAccount.getSwidgeProtocol('gateway')
 
 const result = await sw.swidge({
   fromToken: 'BTC',
