@@ -204,3 +204,50 @@ describe('GatewaySwidge', () => {
     expect(client.createOrder).not.toHaveBeenCalled()
   })
 })
+
+// Attribution is revenue-bearing: gateway-wdk volume is credited to BOB (at 0 fee) purely by
+// this token riding on every request. Dropping the default would keep every other test green
+// while silently un-attributing all WDK volume, so pin the exact value that goes on the wire.
+describe('GatewaySwidge attribution', () => {
+  const BOB_BEARER_TOKEN = '49e52108b436492ebf03e85aa914718b'
+
+  const httpSpy = () => ({
+    request: vi.fn(async () => ({
+      status: 200,
+      body: { onramp: { inputAmount: { amount: '1' }, outputAmount: { amount: '1' }, fees: {} } },
+    })),
+  })
+
+  const quote = (sw: GatewaySwidge) =>
+    sw.quoteSwidge({
+      fromToken: 'BTC',
+      toToken: '0xtok',
+      toChain: 'base',
+      recipient: '0xrcpt',
+      fromTokenAmount: 100000n,
+    })
+
+  test('with no bearerToken configured, requests carry BOB’s attribution key', async () => {
+    const http = httpSpy()
+    await quote(new GatewaySwidge({}, { fromChain: 'bitcoin', http }))
+    expect(http.request).toHaveBeenCalledWith(
+      'GET',
+      expect.stringContaining('/v3/get-quote'),
+      expect.objectContaining({
+        headers: { authorization: `Bearer ${BOB_BEARER_TOKEN}` },
+      })
+    )
+  })
+
+  test('an explicit bearerToken overrides the default (direct API agreements)', async () => {
+    const http = httpSpy()
+    await quote(new GatewaySwidge({}, { fromChain: 'bitcoin', bearerToken: 'x'.repeat(32), http }))
+    expect(http.request).toHaveBeenCalledWith(
+      'GET',
+      expect.stringContaining('/v3/get-quote'),
+      expect.objectContaining({
+        headers: { authorization: 'Bearer ' + 'x'.repeat(32) },
+      })
+    )
+  })
+})

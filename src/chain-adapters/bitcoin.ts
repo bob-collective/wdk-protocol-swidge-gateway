@@ -1,5 +1,11 @@
-import { Transaction, address as btcAddress, networks } from 'bitcoinjs-lib'
+import * as ecc from '@bitcoinerlab/secp256k1'
+import { Transaction, address as btcAddress, initEccLib, networks } from 'bitcoinjs-lib'
 import { GatewaySwidgeError, ERR } from '../errors.js'
+
+// Taproot (P2TR) deposit addresses cannot be parsed without an ECC library. Register ours here
+// rather than relying on a wdk-wallet-btc version that happens to share our bitcoinjs-lib copy
+// and initialize it for us — see tests/taproot-ecc.test.ts.
+initEccLib(ecc)
 
 interface BtcAccount {
   getAddress(): string | Promise<string>
