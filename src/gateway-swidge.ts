@@ -14,6 +14,8 @@ import type { GatewayClientConfig } from './gateway-client.js'
 import { getAdapter } from './chain-adapters/registry.js'
 import { evmAdapter } from './chain-adapters/evm.js'
 import { bitcoinAdapter } from './chain-adapters/bitcoin.js'
+import { tronAdapter } from './chain-adapters/tron.js'
+import type { TronOpts } from './chain-adapters/tron.js'
 import { chainFamily, detectVariant } from './chains.js'
 import { toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
@@ -21,7 +23,7 @@ import { toSwidgeQuote } from './map/quote.js'
 import { toSwidgeStatus } from './map/status.js'
 import { toSupportedChains, toSupportedTokens } from './map/routes.js'
 import { orderPayload } from './map/order.js'
-import type { BtcOrderPayload, EvmOrderPayload } from './map/order.js'
+import type { BtcOrderPayload, EvmOrderPayload, TronOrderPayload } from './map/order.js'
 import type { SwidgeSimulation } from './types.js'
 
 const DEFAULT_SLIPPAGE = 0.03
@@ -37,6 +39,8 @@ export interface GatewaySwidgeConfig {
   slippage?: number
   feeRate?: number
   fromChain?: string
+  tronWeb?: TronOpts['tronWeb']
+  tronProvider?: string
   [key: string]: unknown
 }
 
@@ -53,6 +57,7 @@ export class GatewaySwidge extends SwidgeProtocol {
   private _slippage: number
   private _feeRate: number | undefined
   private _fromChain: string | undefined
+  private _tronOpts: TronOpts
   private _spenderCache: Map<string, string>
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,6 +77,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     this._slippage = config.slippage ?? DEFAULT_SLIPPAGE
     this._feeRate = config.feeRate
     this._fromChain = config.fromChain
+    this._tronOpts = { tronWeb: config.tronWeb, tronProvider: config.tronProvider }
     this._spenderCache = new Map()
   }
 
@@ -136,13 +142,20 @@ export class GatewaySwidge extends SwidgeProtocol {
     const gw = await this._client.getQuote(params)
     // priceImpact: wire is string, WDK type is number — cast at boundary.
     // fees: WDK SwidgeFee requires `token`; our local fees omit it — cast at boundary.
-    return toSwidgeQuote(gw as Record<string, unknown>, { affiliateApplied }) as unknown as SwidgeQuote
+    return toSwidgeQuote(gw as Record<string, unknown>, {
+      affiliateApplied,
+    }) as unknown as SwidgeQuote
   }
 
-  async swidge(options: SwidgeOptions, config: Record<string, unknown> = {}): Promise<SwidgeResult> {
+  async swidge(
+    options: SwidgeOptions,
+    config: Record<string, unknown> = {}
+  ): Promise<SwidgeResult> {
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     const quote = await this._client.getQuote(params)
-    const order = await this._client.createOrder({ [variant]: (quote as Record<string, unknown>)[variant] })
+    const order = await this._client.createOrder({
+      [variant]: (quote as Record<string, unknown>)[variant],
+    })
     const payload = orderPayload(
       order as Record<string, unknown>,
       variant,
@@ -159,15 +172,20 @@ export class GatewaySwidge extends SwidgeProtocol {
       await this._registerBestEffort({ onramp: { order_id: payload.orderId, bitcoin_tx_hex: hex } })
       txid = id
     } else {
-      const evmPayload = payload as EvmOrderPayload
-      const sent = await (adapter as typeof evmAdapter).send(
-        this._account,
-        { ...evmPayload },
-        { aaConfig: this._aaConfig(config) }
-      )
+      const sent =
+        payload.kind === 'tron'
+          ? await (adapter as typeof tronAdapter).send(
+              this._account,
+              { ...(payload as TronOrderPayload) },
+              this._tronOpts
+            )
+          : await (adapter as typeof evmAdapter).send(
+              this._account,
+              { ...(payload as EvmOrderPayload) },
+              { aaConfig: this._aaConfig(config) }
+            )
       const quoteVariant = (quote as Record<string, unknown>)[variant] as
-        | Record<string, unknown>
-        | undefined
+        Record<string, unknown> | undefined
       await this._registerBestEffort({
         [variant]: {
           order_id: payload.orderId,
@@ -221,14 +239,18 @@ export class GatewaySwidge extends SwidgeProtocol {
   async simulateSwidge(options: SwidgeOptions & { fromChain?: string }): Promise<SwidgeSimulation> {
     const { params, variant, srcFamily } = await this._buildQuoteParams(options)
     const quote = await this._client.getQuote(params)
-    const order = await this._client.createOrder({ [variant]: (quote as Record<string, unknown>)[variant] })
+    const order = await this._client.createOrder({
+      [variant]: (quote as Record<string, unknown>)[variant],
+    })
     const payload = orderPayload(
       order as Record<string, unknown>,
       variant,
       quote as Record<string, unknown>
     )
     const adapter = getAdapter(srcFamily)
-    const sq = toSwidgeQuote(quote as Record<string, unknown>, { affiliateApplied: params.affiliates !== undefined })
+    const sq = toSwidgeQuote(quote as Record<string, unknown>, {
+      affiliateApplied: params.affiliates !== undefined,
+    })
 
     if (payload.kind === 'btc') {
       const btcPayload = payload as BtcOrderPayload
@@ -243,6 +265,25 @@ export class GatewaySwidge extends SwidgeProtocol {
         quote: sq as unknown as Record<string, unknown>,
         broadcast: false,
         onramp: simResult,
+      }
+    } else if (payload.kind === 'tron') {
+      const tronPayload = payload as TronOrderPayload
+      const simResult = await (adapter as typeof tronAdapter).simulate(
+        this._account,
+        { ...tronPayload },
+        {
+          ...this._tronOpts,
+          token: (options as { fromToken?: string }).fromToken,
+          spender: tronPayload.tx.to,
+          amount: options.fromTokenAmount,
+        }
+      )
+      return {
+        variant,
+        orderId: payload.orderId,
+        quote: sq as unknown as Record<string, unknown>,
+        broadcast: false,
+        tron: simResult,
       }
     } else {
       const evmPayload = payload as EvmOrderPayload
@@ -276,8 +317,12 @@ export class GatewaySwidge extends SwidgeProtocol {
     )
   }
 
-  async getSupportedTokens(options?: SwidgeSupportedTokensOptions): Promise<SwidgeSupportedToken[]> {
-    const opts = options ? { fromChain: options.fromChain != null ? String(options.fromChain) : undefined } : {}
+  async getSupportedTokens(
+    options?: SwidgeSupportedTokensOptions
+  ): Promise<SwidgeSupportedToken[]> {
+    const opts = options
+      ? { fromChain: options.fromChain != null ? String(options.fromChain) : undefined }
+      : {}
     return toSupportedTokens(
       (await this._client.getRoutes()) as Parameters<typeof toSupportedTokens>[0],
       opts
@@ -293,9 +338,13 @@ export class GatewaySwidge extends SwidgeProtocol {
    * instance, so call it once per route, not before every swap.
    */
   async getRequiredApproval(
-    options: SwidgeOptions & { fromToken: string; toToken: string; fromTokenAmount: bigint | string | number }
+    options: SwidgeOptions & {
+      fromToken: string
+      toToken: string
+      fromTokenAmount: bigint | string | number
+    }
   ): Promise<{ token: string; spender: string; amount: bigint } | null> {
-    const { params, variant } = await this._buildQuoteParams(options)
+    const { params, variant, srcFamily } = await this._buildQuoteParams(options)
     if (variant === 'onramp') return null
     const key = `${variant}:${options.fromToken}:${options.toToken}:${(options.toChain as string) || ''}`
     let spender: string
@@ -311,9 +360,19 @@ export class GatewaySwidge extends SwidgeProtocol {
         variant,
         quote as Record<string, unknown>
       )
-      if (payload.kind !== 'evm') throw new Error('expected evm payload for approval check')
+      if (payload.kind === 'btc')
+        throw new Error('expected a contract-call payload for approval check')
       spender = payload.tx.to
       this._spenderCache.set(key, spender)
+    }
+    if (srcFamily === 'tron') {
+      return tronAdapter.getRequiredApproval(
+        this._account,
+        options.fromToken,
+        spender,
+        options.fromTokenAmount,
+        this._tronOpts
+      )
     }
     return evmAdapter.getRequiredApproval(
       this._account,

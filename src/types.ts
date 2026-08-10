@@ -3,8 +3,9 @@
 
 import type { BtcSimulateResult } from './chain-adapters/bitcoin.js'
 import type { EvmSimulateResult } from './chain-adapters/evm.js'
+import type { TronSimulateResult } from './chain-adapters/tron.js'
 
-export type { BtcSimulateResult, EvmSimulateResult }
+export type { BtcSimulateResult, EvmSimulateResult, TronSimulateResult }
 
 /**
  * Result of `GatewaySwidge.simulateSwidge()`.
@@ -28,6 +29,14 @@ export type SwidgeSimulation =
       quote: Record<string, unknown>
       broadcast: false
       evm: EvmSimulateResult
+    }
+  | {
+      variant: 'onramp' | 'offramp' | 'tokenSwap'
+      orderId: string
+      /** Mapped quote (same shape as `quoteSwidge` output). */
+      quote: Record<string, unknown>
+      broadcast: false
+      tron: TronSimulateResult
     }
 
 export interface GetQuoteParamsV3 {

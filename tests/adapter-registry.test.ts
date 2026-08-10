@@ -2,16 +2,13 @@ import { describe, test, expect } from 'vitest'
 import { getAdapter } from '../src/chain-adapters/registry.js'
 
 describe('getAdapter', () => {
-  test('returns bitcoin + evm adapters', () => {
+  test('returns bitcoin + evm + tron adapters', () => {
     expect(getAdapter('bitcoin').family).toBe('bitcoin')
     expect(getAdapter('evm').family).toBe('evm')
+    expect(getAdapter('tron').family).toBe('tron')
   })
 
-  test('tron source send throws with issue link', async () => {
-    await expect(getAdapter('tron').send()).rejects.toThrow(/wdk-wallet-tron#48|destination-only/i)
-  })
-
-  test('solana unsupported in v1', () => {
+  test('solana unsupported', () => {
     expect(() => getAdapter('solana')).toThrow(/not supported/i)
   })
 })

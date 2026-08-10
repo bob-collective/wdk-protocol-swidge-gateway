@@ -1,7 +1,14 @@
 export { GatewaySwidge, default } from './gateway-swidge.js'
 export { GatewayClient } from './gateway-client.js'
 export { GatewaySwidgeError, ERR } from './errors.js'
-export type { SwidgeSimulation, BtcSimulateResult, EvmSimulateResult } from './types.js'
+export { buildTronApproval } from './chain-adapters/tron.js'
+export type { TronApprovalCall } from './chain-adapters/tron.js'
+export type {
+  SwidgeSimulation,
+  BtcSimulateResult,
+  EvmSimulateResult,
+  TronSimulateResult,
+} from './types.js'
 
 /**
  * Ergonomic constant for Bitcoin as the source or destination token.
