@@ -3,6 +3,17 @@ import { tronAdapter, buildTronApproval } from '../src/chain-adapters/tron.js'
 import type { TronWebLike } from '../src/chain-adapters/tron.js'
 import { buildTronTx, OWNER, REGISTRY, USDT, SPENDER } from './fixtures/tron.js'
 
+const { tronWebCtor } = vi.hoisted(() => ({ tronWebCtor: vi.fn() }))
+vi.mock('tronweb', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('tronweb')>()),
+  TronWeb: class {
+    transactionBuilder = {}
+    constructor(config: { fullHost: string }) {
+      tronWebCtor(config.fullHost)
+    }
+  },
+}))
+
 function word(n: bigint): string {
   return n.toString(16).padStart(64, '0')
 }
@@ -584,5 +595,25 @@ describe('buildTronApproval', () => {
     expect(
       buildTronApproval({ token: USDT, spender: SPENDER, amount: 1 }, { feeLimit: 10 }).options
     ).toEqual({ feeLimit: 10 })
+  })
+})
+
+describe('tron provider cache', () => {
+  test('reuses one client per node URL and evicts the least recently used', async () => {
+    const at = (url: string) => tronAdapter.simulate(sender(), { tx: TX }, { tronProvider: url })
+
+    await at('https://node-0')
+    await at('https://node-0')
+    expect(tronWebCtor).toHaveBeenCalledTimes(1)
+
+    for (let i = 1; i < 8; i++) await at(`https://node-${i}`)
+    await at('https://node-0')
+    expect(tronWebCtor).toHaveBeenCalledTimes(8)
+
+    await at('https://node-8')
+    await at('https://node-0')
+    expect(tronWebCtor).toHaveBeenCalledTimes(9)
+    await at('https://node-1')
+    expect(tronWebCtor).toHaveBeenCalledTimes(10)
   })
 })

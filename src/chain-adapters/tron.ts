@@ -66,9 +66,7 @@ export interface TronWebLike {
 interface TronAccount {
   getAddress(): string | Promise<string>
   sendTransaction?: (tx: TronPrebuiltTx) => Promise<{ hash: string }>
-  quoteSendTransaction?: (
-    tx: TronPrebuiltTx
-  ) => Promise<{ fee?: bigint | number; activationFee?: bigint | number }>
+  quoteSendTransaction?: (tx: TronPrebuiltTx) => Promise<{ fee?: bigint | number }>
   _tronWeb?: TronWebLike
   [key: string]: unknown
 }
@@ -98,17 +96,35 @@ export interface TronSimulateResult {
   reason?: string
 }
 
+const PROVIDER_CACHE_MAX = 8
 const providerCache = new Map<string, TronWebLike>()
+
+function getCachedProvider(url: string): TronWebLike | undefined {
+  const cached = providerCache.get(url)
+  if (!cached) return undefined
+  providerCache.delete(url)
+  providerCache.set(url, cached)
+  return cached
+}
+
+function cacheProvider(url: string, provider: TronWebLike): void {
+  providerCache.set(url, provider)
+  while (providerCache.size > PROVIDER_CACHE_MAX) {
+    const oldest = providerCache.keys().next().value
+    if (oldest === undefined) return
+    providerCache.delete(oldest)
+  }
+}
 
 async function resolveTronWeb(account: TronAccount, opts: TronOpts): Promise<TronWebLike> {
   if (opts.tronWeb) return opts.tronWeb
   if (opts.tronProvider) {
-    const cached = providerCache.get(opts.tronProvider)
+    const cached = getCachedProvider(opts.tronProvider)
     if (cached) return cached
     // Imported lazily: consumers that never touch Tron never load tronweb.
     const { TronWeb } = await import('tronweb')
     const built = new TronWeb({ fullHost: opts.tronProvider }) as unknown as TronWebLike
-    providerCache.set(opts.tronProvider, built)
+    cacheProvider(opts.tronProvider, built)
     return built
   }
   if (account && account._tronWeb) return account._tronWeb
