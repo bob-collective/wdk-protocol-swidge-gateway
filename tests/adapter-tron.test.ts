@@ -172,6 +172,26 @@ describe('tronAdapter.send', () => {
     )
   })
 
+  test('surfaces a node that answers with a bare result: false', async () => {
+    const tronWeb = fakeTronWeb({
+      triggerSmartContract: vi.fn(async () => ({ result: false, transaction: buildTronTx() })),
+    } as unknown as Partial<TronWebLike['transactionBuilder']>)
+    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).rejects.toThrow(
+      /rejected the order call/
+    )
+  })
+
+  test('reports a rejection whose code and message are not strings', async () => {
+    const tronWeb = fakeTronWeb({
+      triggerSmartContract: vi.fn(async () => ({
+        result: { result: false, code: Symbol('code'), message: Symbol('message') },
+      })),
+    } as unknown as Partial<TronWebLike['transactionBuilder']>)
+    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).rejects.toThrow(
+      /rejected the order call$/
+    )
+  })
+
   test('surfaces a node that reports a top-level Error', async () => {
     const tronWeb = fakeTronWeb({
       triggerSmartContract: vi.fn(async () => ({
@@ -284,12 +304,20 @@ describe('tronAdapter.send rejects a node response that is not the requested cal
     )
   })
 
-  test('a transaction whose window already closed', async () => {
-    const timestamp = Date.now() - 120_000
+  test('a transaction whose window closed long ago', async () => {
+    const timestamp = Date.now() - 40 * 60 * 1000
     const tronWeb = hostileTronWeb(buildTronTx({ timestamp, expiration: timestamp + 60_000 }))
     await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).rejects.toThrow(
       /expired \d+ms ago/
     )
+  })
+
+  test('a just-expired transaction is tolerated within the clock-skew allowance', async () => {
+    const timestamp = Date.now() - 120_000
+    const tronWeb = hostileTronWeb(buildTronTx({ timestamp, expiration: timestamp + 60_000 }))
+    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).resolves.toEqual({
+      txid: 't',
+    })
   })
 
   test('an expiration that precedes its own timestamp', async () => {

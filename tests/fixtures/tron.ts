@@ -14,6 +14,8 @@ export const SPENDER = 'TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7'
 
 const TIMESTAMP = Date.now()
 
+const DEFAULT_WINDOW_MS = 5 * 60 * 1000
+
 export interface TronTxOverrides {
   owner?: string
   to?: string
@@ -39,7 +41,7 @@ export function buildTronTx(overrides: TronTxOverrides = {}) {
     callValue = 0,
     feeLimit = 50_000_000,
     timestamp = TIMESTAMP,
-    expiration = timestamp + 60_000,
+    expiration = timestamp + DEFAULT_WINDOW_MS,
     callTokenValue,
     tokenId,
     memo,

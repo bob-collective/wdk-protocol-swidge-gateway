@@ -40,7 +40,7 @@ export interface TronApprovalCall {
 }
 
 interface TronNodeStatus {
-  result?: { result?: boolean; code?: string; message?: string }
+  result?: boolean | { result?: boolean; code?: string; message?: string }
   Error?: string
 }
 
@@ -144,9 +144,16 @@ function toSun(value: string | undefined, fallback: number, field: string): numb
 
 function assertNodeAccepted(res: TronNodeStatus | undefined, what: string): void {
   if (!res) return
-  const rejected = res.result != null && res.result.result === false
+  const status = res.result
+  const rejected =
+    status === false || (status != null && typeof status === 'object' && status.result === false)
   if (!rejected && !res.Error) return
-  const detail = [res.result?.code, res.result?.message ?? res.Error].filter(Boolean).join(': ')
+  const message =
+    (typeof status === 'object' && status != null ? status.message : undefined) ?? res.Error
+  const code = typeof status === 'object' && status != null ? status.code : undefined
+  const detail = [code, message]
+    .filter((part) => typeof part === 'string' && part !== '')
+    .join(': ')
   throw new GatewaySwidgeError(
     ERR.HTTP,
     `tron node rejected ${what}${detail ? `: ${detail}` : ''}`,
@@ -282,7 +289,9 @@ async function assertBuiltTxMatches(
   }
   if (!(expiration > 0)) fail('a transaction with no expiration')
   if (expiration <= timestamp) fail('a transaction that expires before it was created')
-  if (expiration <= now) fail(`a transaction that expired ${now - expiration}ms ago`)
+  if (expiration <= now - MAX_CLOCK_SKEW_MS) {
+    fail(`a transaction that expired ${now - expiration}ms ago`)
+  }
   const window = expiration - timestamp
   if (window > MAX_TX_WINDOW_MS) {
     fail(`an expiration ${window}ms out, beyond the ${MAX_TX_WINDOW_MS}ms we accept`)
