@@ -275,8 +275,11 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 | `config.slippage`       | `number?`                                | Default slippage fraction (default `0.03` = 3%).                                                                                           |
 | `config.feeRate`        | `number?`                                | BTC fee rate in sat/vByte.                                                                                                                 |
 | `config.fromChain`      | `string?`                                | Source chain id. Required when not passed in `SwidgeOptions`.                                                                              |
+| `config.ownerAddress`   | `string?`                                | EVM address recorded as the order's owner. Overrides the derived default (see below).                                                      |
 | `config.tronWeb`        | `object?`                                | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. Defaults to the account's own provider. |
 | `config.tronProvider`   | `string?`                                | Tron source routes only. Full-node URL to build a tronweb client from.                                                                     |
+
+The gateway requires an `ownerAddress` on every route and validates it as an **Ethereum** address, so the module derives one: the `recipient` on an onramp (the source side is a bare BTC payment), the account's own address everywhere else. A Tron owner therefore goes on the wire in its `0x`-hex form — the same 20 bytes its Base58Check spelling encodes — while `sender`/`recipient` on the same request keep their native encoding. Set `config.ownerAddress` when the order should be owned by some other EVM account.
 
 ### `SwidgeOptions`
 

@@ -17,6 +17,7 @@ import { bitcoinAdapter } from './chain-adapters/bitcoin.js'
 import { tronAdapter } from './chain-adapters/tron.js'
 import type { TronOpts } from './chain-adapters/tron.js'
 import { chainFamily, detectVariant } from './chains.js'
+import { toEvmAddress } from './address.js'
 import { toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
 import { toSwidgeQuote } from './map/quote.js'
@@ -39,6 +40,7 @@ export interface GatewaySwidgeConfig {
   slippage?: number
   feeRate?: number
   fromChain?: string
+  ownerAddress?: string
   tronWeb?: TronOpts['tronWeb']
   tronProvider?: string
   [key: string]: unknown
@@ -57,6 +59,7 @@ export class GatewaySwidge extends SwidgeProtocol {
   private _slippage: number
   private _feeRate: number | undefined
   private _fromChain: string | undefined
+  private _ownerAddress: string | undefined
   private _tronOpts: TronOpts
   private _spenderCache: Map<string, string>
 
@@ -77,6 +80,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     this._slippage = config.slippage ?? DEFAULT_SLIPPAGE
     this._feeRate = config.feeRate
     this._fromChain = config.fromChain
+    this._ownerAddress = config.ownerAddress
     this._tronOpts = { tronWeb: config.tronWeb, tronProvider: config.tronProvider }
     this._spenderCache = new Map()
   }
@@ -117,7 +121,8 @@ export class GatewaySwidge extends SwidgeProtocol {
       this._account && typeof this._account.getAddress === 'function'
         ? await this._account.getAddress()
         : undefined
-    const ownerAddress = variant === 'onramp' ? options.recipient : fromAddress
+    const owner = this._ownerAddress ?? (variant === 'onramp' ? options.recipient : fromAddress)
+    const ownerAddress = owner === undefined ? undefined : toEvmAddress(owner)
     const params = toQuoteParams(
       {
         ...options,

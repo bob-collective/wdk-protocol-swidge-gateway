@@ -237,6 +237,82 @@ describe('GatewaySwidge', () => {
     expect(res.hash).toBe('a1b2c3')
   })
 
+  test('quoteSwidge from tron: ownerAddress is 0x-hex while sender stays Base58Check', async () => {
+    const getQuote = vi.fn(async () => ({
+      offramp: { inputAmount: { amount: '1000000' }, outputAmount: { amount: '900' } },
+    }))
+    const sw = new GatewaySwidge(
+      { getAddress: async () => OWNER },
+      { fromChain: 'tron', client: fakeClient({ getQuote } as unknown as Partial<GatewayClient>) }
+    )
+    await sw.quoteSwidge({
+      fromToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+      toToken: 'BTC',
+      toChain: 'bitcoin',
+      recipient: 'bc1qrcpt',
+      fromTokenAmount: 1000000n,
+    })
+    expect(getQuote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sender: OWNER,
+        ownerAddress: '0x891cdb91d149f23b1a45d9c5ca78a88d0cb44c18',
+      })
+    )
+  })
+
+  test('quoteSwidge onramp to tron: the Tron recipient becomes a 0x-hex ownerAddress', async () => {
+    const getQuote = vi.fn(async () => ({
+      onramp: { inputAmount: { amount: '100000' }, outputAmount: { amount: '99000' } },
+    }))
+    const sw = new GatewaySwidge(
+      { getAddress: async () => 'bc1q' },
+      {
+        fromChain: 'bitcoin',
+        client: fakeClient({ getQuote } as unknown as Partial<GatewayClient>),
+      }
+    )
+    await sw.quoteSwidge({
+      fromToken: 'BTC',
+      toToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+      toChain: 'tron',
+      recipient: OWNER,
+      fromTokenAmount: 100000n,
+    })
+    expect(getQuote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipient: OWNER,
+        ownerAddress: '0x891cdb91d149f23b1a45d9c5ca78a88d0cb44c18',
+      })
+    )
+  })
+
+  test('config.ownerAddress overrides the derived owner', async () => {
+    const getQuote = vi.fn(async () => ({
+      offramp: { inputAmount: { amount: '1000000' }, outputAmount: { amount: '900' } },
+    }))
+    const sw = new GatewaySwidge(
+      { getAddress: async () => OWNER },
+      {
+        fromChain: 'tron',
+        ownerAddress: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+        client: fakeClient({ getQuote } as unknown as Partial<GatewayClient>),
+      }
+    )
+    await sw.quoteSwidge({
+      fromToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+      toToken: 'BTC',
+      toChain: 'bitcoin',
+      recipient: 'bc1qrcpt',
+      fromTokenAmount: 1000000n,
+    })
+    expect(getQuote).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sender: OWNER,
+        ownerAddress: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+      })
+    )
+  })
+
   test('getRequiredApproval: tron routes read the allowance via the account provider', async () => {
     const tronClient = fakeClient({
       getQuote: vi.fn(async () => ({

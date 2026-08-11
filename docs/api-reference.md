@@ -38,8 +38,11 @@ new GatewaySwidge(account, config?)
 | `config.slippage`       | `number`                                | `0.03`              | Default slippage fraction (3%).                                                                    |
 | `config.feeRate`        | `number`                                | —                   | BTC fee rate in sat/vByte.                                                                         |
 | `config.fromChain`      | `string`                                | —                   | Source chain id. Required when not passed in `SwidgeOptions`.                                      |
+| `config.ownerAddress`   | `string`                                | derived             | EVM address recorded as the order's owner. Overrides the derived default (see below).              |
 | `config.tronWeb`        | `object`                                | account's provider  | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. |
 | `config.tronProvider`   | `string`                                | —                   | Tron source routes only. Full-node URL to build a tronweb client from.                             |
+
+The gateway requires an `ownerAddress` on every route and validates it as an **Ethereum** address, so the module derives one: the `recipient` on an onramp (the source side is a bare BTC payment), the account's own address everywhere else. A Tron address is Base58Check over `0x41 || hash160(pubkey)` — the same 20 bytes an EVM address holds — so a Tron owner is sent in its `0x`-hex form while `sender`/`recipient` on the same request keep their native encoding. Set `config.ownerAddress` when the order should be owned by some other EVM account.
 
 Both Tron options only select the node that **builds** the order call and reads allowances. Broadcasting always goes through the account, so a `WalletAccountTron` must be connected to a provider of its own regardless — neither option substitutes for that.
 
