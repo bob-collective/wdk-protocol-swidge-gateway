@@ -184,14 +184,24 @@ const route = {
 }
 
 const approval = await sw.getRequiredApproval(route)
-if (approval) await account.sendTransaction(buildTronApproval(approval))
+if (approval) {
+  await account.sendTransaction(buildTronApproval(approval))
+  while ((await sw.getRequiredApproval(route)) !== null) {
+    await new Promise((resolve) => setTimeout(resolve, 3_000))
+  }
+}
 
 const result = await sw.swidge(route)
 ```
 
+See `examples/offramp-usdt-tron-to-btc.ts` for the same flow with a bounded retry count.
+
 The Tron account's own provider is used to build the order's contract call and read the
 allowance. Pass `config.tronWeb` (a tronweb instance) or `config.tronProvider` (a full-node
-URL) to override it — required only if the account was created without a provider.
+URL) to override which node does that. Both only affect building the call and reading
+allowances — broadcasting always goes through the account, so it must be connected to a
+provider of its own regardless. Pass a real tronweb instance: the module relies on
+tronweb's own check that the node's response matches the call that was requested.
 
 ### Affiliate Fees
 
@@ -256,7 +266,7 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 
 | Parameter               | Type                                     | Description                                                                                                                                |
 | ----------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `account`               | `object`                                 | WDK wallet account (BTC or EVM).                                                                                                           |
+| `account`               | `object`                                 | WDK wallet account (BTC, EVM or Tron).                                                                                                     |
 | `config.apiUrl`         | `string?`                                | Gateway API base URL.                                                                                                                      |
 | `config.bearerToken`    | `string?`                                | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee, attributes volume to BOB).                                         |
 | `config.http`           | `object?`                                | Injectable HTTP transport (useful for testing).                                                                                            |

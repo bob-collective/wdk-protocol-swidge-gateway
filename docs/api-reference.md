@@ -29,7 +29,7 @@ new GatewaySwidge(account, config?)
 
 | Parameter               | Type                                    | Default             | Description                                                                                        |
 | ----------------------- | --------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
-| `account`               | `object`                                | —                   | WDK wallet account (BTC or EVM).                                                                   |
+| `account`               | `object`                                | —                   | WDK wallet account (BTC, EVM or Tron).                                                             |
 | `config.apiUrl`         | `string`                                | BOB Gateway V3      | Gateway API base URL.                                                                              |
 | `config.bearerToken`    | `string`                                | BOB attribution key | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee).                           |
 | `config.http`           | `object`                                | —                   | Injectable HTTP transport (for tests).                                                             |
@@ -40,6 +40,10 @@ new GatewaySwidge(account, config?)
 | `config.fromChain`      | `string`                                | —                   | Source chain id. Required when not passed in `SwidgeOptions`.                                      |
 | `config.tronWeb`        | `object`                                | account's provider  | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. |
 | `config.tronProvider`   | `string`                                | —                   | Tron source routes only. Full-node URL to build a tronweb client from.                             |
+
+Both Tron options only select the node that **builds** the order call and reads allowances. Broadcasting always goes through the account, so a `WalletAccountTron` must be connected to a provider of its own regardless — neither option substitutes for that.
+
+Pass a real tronweb instance to `config.tronWeb`. The module relies on tronweb re-deriving the response's `raw_data_hex`/`txID` from the locally requested call; on top of that it re-checks the built transaction itself (contract type, owner, target, calldata, call value, fee limit, hash binding and expiration window) before the account signs it.
 
 ### `SwidgeOptions`
 
@@ -112,10 +116,14 @@ On Tron the allowance is read with a constant-contract call through the resolved
 
 Turns a `getRequiredApproval()` result into a `TronSmartContractCall` that `WalletAccountTron.sendTransaction()` accepts. Needed because `WalletAccountTron` has no `approve()` method — its `transfer()` is a fixed `transfer(address,uint256)`.
 
-| Parameter          | Type                                                 | Description                                            |
-| ------------------ | ---------------------------------------------------- | ------------------------------------------------------ |
-| `approval`         | `{ token: string, spender: string, amount: bigint }` | The approval returned by `getRequiredApproval()`.      |
-| `options.feeLimit` | `number?`                                            | Max sun to burn on the approve call (default 100 TRX). |
+| Parameter          | Type                                                 | Description                                                                             |
+| ------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `approval`         | `{ token: string, spender: string, amount: bigint }` | The approval returned by `getRequiredApproval()`.                                       |
+| `options.feeLimit` | `number?`                                            | Max sun to burn on the approve call (default 100 TRX). Must be a positive safe integer. |
+
+#### `simulateSwidge()` on Tron
+
+`tron.valid` means the full node accepted and pre-executed the contract call while building it — not that the fee or the account's resources were checked. Unlike the EVM leg, an account without `quoteSendTransaction` is not an error here: the build itself is the execution check, so `valid` is still meaningful and the missing fee is reported as `feeEstimate: null`.
 
 #### Inherited methods (EVM ↔ EVM)
 

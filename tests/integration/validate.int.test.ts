@@ -193,11 +193,15 @@ const RUN = !!process.env.TEST_SEED
       expect('tron' in sim).toBe(true)
       if (!('tron' in sim)) return
 
-      const { valid, requiredApproval, tx } = sim.tron
+      const { valid, requiredApproval, tx, reason } = sim.tron
       expect(tx.to).toMatch(/^T/)
-      // Same tolerance as the EVM leg: a wallet without a standing TRC-20 approval
-      // legitimately simulates as invalid, and says so via requiredApproval.
-      expect(valid || (!valid && requiredApproval !== null)).toBe(true)
+      if (!valid) {
+        expect(requiredApproval).not.toBeNull()
+        expect(reason).toBeDefined()
+        expect(reason).not.toMatch(
+          /no tron provider|fetch failed|ECONN|ENOTFOUND|EAI_AGAIN|timeout|socket hang up/i
+        )
+      }
 
       if (requiredApproval) {
         expect(requiredApproval).toMatchObject({

@@ -106,7 +106,10 @@ async function resolveTronWeb(account: TronAccount, opts: TronOpts): Promise<Tro
   throw new GatewaySwidgeError(
     ERR.NOT_SUPPORTED,
     'no tron provider available: pass config.tronWeb or config.tronProvider, ' +
-      'or use a WalletAccountTron connected to a provider'
+      'or use a WalletAccountTron connected to a provider. Note that those two ' +
+      'options only cover building the order call and reading allowances — ' +
+      'broadcasting always goes through the account, which must be connected ' +
+      'to a provider of its own'
   )
 }
 
@@ -154,7 +157,103 @@ async function buildUnsignedTx(
       cause: built,
     })
   }
+  await assertBuiltTxMatches(built.transaction, { owner, to: tx.to, data, callValue, feeLimit })
   return built.transaction
+}
+
+/** Longest transaction lifetime we accept; tronweb's own default window is 60s. */
+const MAX_TX_WINDOW_MS = 10 * 60 * 1000
+/** How far ahead of our own clock a node's `timestamp` may sit before we distrust it. */
+const MAX_CLOCK_SKEW_MS = 10 * 60 * 1000
+
+interface TronRawContract {
+  type?: string
+  parameter?: { value?: Record<string, unknown> }
+}
+
+interface TronRawData {
+  contract?: TronRawContract[]
+  fee_limit?: number
+  timestamp?: number
+  expiration?: number
+}
+
+/**
+ * Re-checks the node's built transaction against the call we asked for, before the
+ * account signs its `txID`. See AGENTS.md for why tronweb's own check isn't enough.
+ */
+async function assertBuiltTxMatches(
+  built: TronPrebuiltTx,
+  expected: { owner: string; to: string; data: string; callValue: number; feeLimit: number }
+): Promise<void> {
+  const { utils } = await import('tronweb')
+  const fail = (message: string): never => {
+    throw new GatewaySwidgeError(ERR.VALIDATION, `tron node returned ${message}`, { cause: built })
+  }
+  const toHex = (address: unknown, field: string): string => {
+    if (typeof address !== 'string' || address === '') fail(`no ${field} for the order call`)
+    try {
+      return utils.address.toHex(address as string).toLowerCase()
+    } catch {
+      return fail(`an unreadable ${field}: ${String(address)}`)
+    }
+  }
+
+  if ('signature' in built) {
+    fail('a transaction carrying a signature, which the account would broadcast unsigned by us')
+  }
+
+  const rawData = (built.raw_data ?? {}) as TronRawData
+  const contracts = rawData.contract
+  if (!Array.isArray(contracts) || contracts.length !== 1) {
+    fail(`${String(contracts?.length ?? 0)} contract calls for the order, expected exactly 1`)
+  }
+  const [contract] = contracts as TronRawContract[]
+  if (contract.type !== 'TriggerSmartContract') {
+    fail(`a ${String(contract.type)}, expected a TriggerSmartContract`)
+  }
+
+  let bound = false
+  try {
+    bound = utils.transaction.txCheck(built)
+  } catch {
+    bound = false
+  }
+  if (!bound) fail('a transaction whose txID and raw_data_hex do not match its raw_data')
+
+  const value = contract.parameter?.value ?? {}
+  const check = (field: string, actual: string | number, want: string | number): void => {
+    if (actual !== want) fail(`${field} ${String(actual)} for the order call, expected ${want}`)
+  }
+  check(
+    'owner_address',
+    toHex(value.owner_address, 'owner_address'),
+    toHex(expected.owner, 'owner')
+  )
+  check(
+    'contract_address',
+    toHex(value.contract_address, 'contract_address'),
+    toHex(expected.to, 'to')
+  )
+  check('calldata', String(value.data ?? '').toLowerCase(), expected.data.toLowerCase())
+  check('call_value', Number(value.call_value ?? 0), expected.callValue)
+  check('fee_limit', Number(rawData.fee_limit ?? 0), expected.feeLimit)
+  check('call_token_value', Number(value.call_token_value ?? 0), 0)
+  check('token_id', Number(value.token_id ?? 0), 0)
+
+  // Timing is the one part a node legitimately supplies, so it is bounded rather than
+  // matched: a stretched expiration widens the replay window for the signed transaction.
+  const now = Date.now()
+  const timestamp = Number(rawData.timestamp ?? 0)
+  const expiration = Number(rawData.expiration ?? 0)
+  if (timestamp > now + MAX_CLOCK_SKEW_MS) {
+    fail(`a timestamp ${timestamp - now}ms ahead of local time`)
+  }
+  if (!(expiration > 0)) fail('a transaction with no expiration')
+  const window = expiration - (timestamp > 0 ? timestamp : now)
+  if (window > MAX_TX_WINDOW_MS) {
+    fail(`an expiration ${window}ms out, beyond the ${MAX_TX_WINDOW_MS}ms we accept`)
+  }
 }
 
 export const tronAdapter = {

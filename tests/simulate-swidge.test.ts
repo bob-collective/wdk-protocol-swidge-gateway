@@ -12,6 +12,7 @@ import { bitcoinAdapter } from '../src/chain-adapters/bitcoin.js'
 import { evmAdapter } from '../src/chain-adapters/evm.js'
 import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
+import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -76,7 +77,7 @@ function fakeTronClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
         order_id: 'sim-order-tron',
         tx: {
           type: 'tron',
-          to: 'TRegistry',
+          to: REGISTRY,
           data: '0xfeed',
           value: '0',
           chain: 'tron',
@@ -306,11 +307,25 @@ describe('GatewaySwidge.simulateSwidge()', () => {
   })
 
   test('offramp simulate from tron: fee quoted from the built call, approval reported', async () => {
-    const triggerSmartContract = vi.fn(async () => ({
-      transaction: { txID: 'sim', raw_data: {}, raw_data_hex: '0a' },
-    }))
+    const triggerSmartContract = vi.fn(
+      async (
+        to: string,
+        _selector: string,
+        options: { input: string; callValue: number; feeLimit: number },
+        _parameters: unknown[],
+        owner: string
+      ) => ({
+        transaction: buildTronTx({
+          to,
+          owner,
+          data: options.input,
+          callValue: options.callValue,
+          feeLimit: options.feeLimit,
+        }),
+      })
+    )
     const account = {
-      getAddress: async () => 'TSender',
+      getAddress: async () => OWNER,
       sendTransaction: vi.fn(),
       quoteSendTransaction: vi.fn(async () => ({ fee: 27_000_000n, activationFee: 0n })),
       _tronWeb: {
@@ -337,7 +352,7 @@ describe('GatewaySwidge.simulateSwidge()', () => {
       expect(result.tron.feeEstimate).toBe(27_000_000n)
       expect(result.tron.requiredApproval).toEqual({
         token: USDT_TRON,
-        spender: 'TRegistry',
+        spender: REGISTRY,
         amount: 1_000_000n,
       })
     }

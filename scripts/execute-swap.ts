@@ -281,16 +281,19 @@ if (PHASE === 'status') {
     console.log(`EVM address: ${evmAddress}`)
     console.log(`USDT balance (6dp): ${String(usdtBalance)}`)
     console.log(`BTC address: ${btcAddress}`)
+  } catch (err) {
+    console.error(`status failed ORDER_ID=${ORDER_ID}:`, err)
+    process.exit(1)
+  }
 
-    // Tron balances come straight off the account — no extra client needed.
+  try {
     const tronUsdt: bigint = await tronAccount.getTokenBalance(USDT_TRON)
     const trx: bigint = await tronAccount.getBalance()
     console.log(`Tron address: ${tronAddress}`)
     console.log(`USDT@tron balance (6dp): ${String(tronUsdt)}`)
     console.log(`TRX balance (sun): ${String(trx)}`)
   } catch (err) {
-    console.error(`status failed ORDER_ID=${ORDER_ID}:`, err)
-    process.exit(1)
+    console.warn('Tron balance lookup failed (status above is unaffected):', err)
   }
 }
 

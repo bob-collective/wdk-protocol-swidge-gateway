@@ -3,6 +3,7 @@ import { Transaction } from 'bitcoinjs-lib'
 import { run as onrampBase } from '../examples/onramp-btc-to-usdt-base.js'
 import { run as quoteAndStatus } from '../examples/quote-and-status.js'
 import { run as offrampTron } from '../examples/offramp-usdt-tron-to-btc.js'
+import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
 
 function makeMockHttp() {
   return {
@@ -70,7 +71,7 @@ function makeTronHttp() {
               order_id: 'tron-1',
               tx: {
                 type: 'tron',
-                to: 'TRegistry',
+                to: REGISTRY,
                 data: '0xfeed',
                 value: '0',
                 feeLimit: '100000000',
@@ -85,15 +86,39 @@ function makeTronHttp() {
 }
 
 function makeTronAccount() {
+  // The allowance only appears once the approve() call has been sent, so the example
+  // has to re-read it rather than assume the broadcast landed.
+  let approved = false
   return {
-    getAddress: async () => 'TSender',
-    sendTransaction: vi.fn(async (_tx: unknown) => ({ hash: 'a1b2c3' })),
+    getAddress: async () => OWNER,
+    sendTransaction: vi.fn(async (tx: unknown) => {
+      if ((tx as { functionSelector?: string }).functionSelector === 'approve(address,uint256)') {
+        approved = true
+      }
+      return { hash: 'a1b2c3' }
+    }),
     _tronWeb: {
       transactionBuilder: {
-        triggerSmartContract: vi.fn(async () => ({
-          transaction: { txID: 'abc', raw_data: {}, raw_data_hex: '0a' },
+        triggerSmartContract: vi.fn(
+          async (
+            to: string,
+            _selector: string,
+            options: { input: string; callValue: number; feeLimit: number },
+            _parameters: unknown[],
+            owner: string
+          ) => ({
+            transaction: buildTronTx({
+              to,
+              owner,
+              data: options.input,
+              callValue: options.callValue,
+              feeLimit: options.feeLimit,
+            }),
+          })
+        ),
+        triggerConstantContract: vi.fn(async () => ({
+          constant_result: [(approved ? 10n ** 30n : 0n).toString(16).padStart(64, '0')],
         })),
-        triggerConstantContract: vi.fn(async () => ({ constant_result: ['0'.repeat(64)] })),
       },
     },
   }
@@ -127,10 +152,29 @@ describe('examples smoke', () => {
     expect(account.sendTransaction.mock.calls[0][0]).toMatchObject({
       functionSelector: 'approve(address,uint256)',
       parameters: [
-        { type: 'address', value: 'TRegistry' },
+        { type: 'address', value: REGISTRY },
         { type: 'uint256', value: '1000000' },
       ],
     })
-    expect(account.sendTransaction.mock.calls[1][0]).toMatchObject({ txID: 'abc' })
+    expect(account.sendTransaction.mock.calls[1][0]).toMatchObject({
+      raw_data_hex: expect.any(String),
+    })
+  })
+
+  test('tron offramp example waits for the allowance before swidging', async () => {
+    const http = makeTronHttp()
+    const account = makeTronAccount()
+    const allowanceCalls = account._tronWeb.transactionBuilder.triggerConstantContract
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (offrampTron as any)({ account, http })
+
+    // One read to discover the approval is needed, then at least one more to confirm it
+    // landed. A single read would mean the example swidged on an unconfirmed approve().
+    expect(allowanceCalls.mock.calls.length).toBeGreaterThanOrEqual(2)
+
+    // And the order call must come after that confirming read, not before it.
+    const orderSend = account.sendTransaction.mock.invocationCallOrder[1]
+    const lastAllowanceRead = allowanceCalls.mock.invocationCallOrder.at(-1)!
+    expect(lastAllowanceRead).toBeLessThan(orderSend)
   })
 })

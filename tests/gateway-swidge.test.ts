@@ -2,6 +2,7 @@ import { describe, test, expect, vi } from 'vitest'
 import { Transaction } from 'bitcoinjs-lib'
 import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
+import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
 
 function buildMinimalTxHex(): { hex: string; txid: string } {
   const tx = new Transaction()
@@ -182,7 +183,7 @@ describe('GatewaySwidge', () => {
           order_id: 'o-tron',
           tx: {
             type: 'tron',
-            to: 'TRegistry',
+            to: REGISTRY,
             data: '0xfeed',
             value: '0',
             chain: 'tron',
@@ -191,11 +192,25 @@ describe('GatewaySwidge', () => {
         },
       })) as unknown as GatewayClient['createOrder'],
     })
-    const triggerSmartContract = vi.fn(async () => ({
-      transaction: { txID: 'abc', raw_data: {}, raw_data_hex: '0a' },
-    }))
+    const triggerSmartContract = vi.fn(
+      async (
+        to: string,
+        _selector: string,
+        options: { input: string; callValue: number; feeLimit: number },
+        _parameters: unknown[],
+        owner: string
+      ) => ({
+        transaction: buildTronTx({
+          to,
+          owner,
+          data: options.input,
+          callValue: options.callValue,
+          feeLimit: options.feeLimit,
+        }),
+      })
+    )
     const account = {
-      getAddress: async () => 'TSender',
+      getAddress: async () => OWNER,
       sendTransaction: vi.fn(async () => ({ hash: 'a1b2c3' })),
       _tronWeb: { transactionBuilder: { triggerSmartContract } },
     }
@@ -208,11 +223,11 @@ describe('GatewaySwidge', () => {
       fromTokenAmount: 1000000n,
     })
     expect(triggerSmartContract).toHaveBeenCalledWith(
-      'TRegistry',
+      REGISTRY,
       '',
       { input: 'feed', callValue: 0, feeLimit: 100_000_000 },
       [],
-      'TSender'
+      OWNER
     )
     // The Tron txid goes on the wire bare — the gateway parses it with or without 0x.
     expect(tronClient.registerTx).toHaveBeenCalledWith({
@@ -234,13 +249,13 @@ describe('GatewaySwidge', () => {
       createOrder: vi.fn(async () => ({
         offramp: {
           order_id: 'o-tron2',
-          tx: { type: 'tron', to: 'TRegistry', data: '0xfeed', value: '0' },
+          tx: { type: 'tron', to: REGISTRY, data: '0xfeed', value: '0' },
         },
       })) as unknown as GatewayClient['createOrder'],
     })
     const triggerConstantContract = vi.fn(async () => ({ constant_result: ['0'.repeat(64)] }))
     const account = {
-      getAddress: async () => 'TSender',
+      getAddress: async () => OWNER,
       _tronWeb: { transactionBuilder: { triggerConstantContract } },
     }
     const sw = new GatewaySwidge(account, { fromChain: 'tron', client: tronClient })
@@ -254,7 +269,7 @@ describe('GatewaySwidge', () => {
     expect(triggerConstantContract).toHaveBeenCalled()
     expect(out).toEqual({
       token: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
-      spender: 'TRegistry',
+      spender: REGISTRY,
       amount: 1000000n,
     })
   })
