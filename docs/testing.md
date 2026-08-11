@@ -63,7 +63,7 @@ Fund them:
 
 - **BTC address** — send at least 30 000 sats (~0.0003 BTC) to cover the `AMOUNT_SATS` default plus fees. This fits a ~$50 test wallet; bump `AMOUNT_SATS` if you funded more.
 - **EVM address** — send at least 50 USDT (`AMOUNT_USDT` default = 50 000 000 in 6-decimal units) and a small amount of ETH for gas estimation (≥ 0.001 ETH).
-- **Tron address** (`T…`, BIP-44 `m/44'/195'`) — only needed for the Tron offramp legs. Send at least 50 USDT-TRC20 plus ~30 TRX so the approve and offramp calls have energy/bandwidth headroom. The Tron node defaults to `https://api.trongrid.io`; override with `TRON_RPC_URL` (a TronGrid API key endpoint avoids shared-IP rate limits in CI).
+- **Tron address** (`T…`, BIP-44 `m/44'/195'`) — only needed for the Tron offramp legs. Send at least 50 USDT-TRC20 plus ~30 TRX so the approve and offramp calls have energy/bandwidth headroom. The Tron node defaults to `https://tron.api.pocket.network`; override with `TRON_RPC_URL` (a dedicated endpoint avoids shared-IP rate limits in CI).
 
 ---
 

@@ -9,7 +9,7 @@
  *
  * Optional env:
  *   EVM_RPC_URL  — Ethereum JSON-RPC URL (default: https://ethereum-rpc.publicnode.com)
- *   TRON_RPC_URL — Tron full-node URL (default: https://api.trongrid.io)
+ *   TRON_RPC_URL — Tron full-node URL (default: https://tron.api.pocket.network)
  *   PHASE        — onramp | offramp | tron-offramp | status
  *   AMOUNT       — integer string: sats for onramp, USDT 6-decimal units for either offramp
  *   ORDER_ID     — gateway order ID (required for status phase)
@@ -22,7 +22,7 @@
 
 const TEST_SEED = process.env.TEST_SEED
 const EVM_RPC_URL = process.env.EVM_RPC_URL ?? 'https://ethereum-rpc.publicnode.com'
-const TRON_RPC_URL = process.env.TRON_RPC_URL ?? 'https://api.trongrid.io'
+const TRON_RPC_URL = process.env.TRON_RPC_URL ?? 'https://tron.api.pocket.network'
 const PHASE = process.env.PHASE
 const AMOUNT = process.env.AMOUNT
 const ORDER_ID = process.env.ORDER_ID

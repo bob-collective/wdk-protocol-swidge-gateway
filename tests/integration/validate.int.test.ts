@@ -13,7 +13,7 @@
  * Environment variables:
  *   TEST_SEED       — BIP-39 mnemonic (required)
  *   EVM_RPC_URL     — JSON-RPC endpoint for Ethereum (default: https://ethereum-rpc.publicnode.com)
- *   TRON_RPC_URL    — Tron full-node endpoint (default: https://api.trongrid.io)
+ *   TRON_RPC_URL    — Tron full-node endpoint (default: https://tron.api.pocket.network)
  *   AMOUNT_SATS     — BTC onramp amount in satoshis (default: 30000, ~$30 — fits a $50 test wallet with fee headroom)
  *   AMOUNT_USDT     — USDT offramp amount in smallest unit (default: 50000000 = 50 USDT)
  */
@@ -32,7 +32,7 @@ const RUN = !!process.env.TEST_SEED
     const USDT_TRON = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
     const BTC_ZERO = '0x0000000000000000000000000000000000000000'
     const EVM_RPC = process.env.EVM_RPC_URL ?? 'https://ethereum-rpc.publicnode.com'
-    const TRON_RPC = process.env.TRON_RPC_URL ?? 'https://api.trongrid.io'
+    const TRON_RPC = process.env.TRON_RPC_URL ?? 'https://tron.api.pocket.network'
     const AMOUNT_SATS = BigInt(process.env.AMOUNT_SATS ?? '30000')
     const AMOUNT_USDT = BigInt(process.env.AMOUNT_USDT ?? '50000000')
 

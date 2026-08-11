@@ -19,7 +19,7 @@ if (!seed) {
 }
 
 const evmRpc = process.env.EVM_RPC_URL ?? 'https://ethereum-rpc.publicnode.com'
-const tronRpc = process.env.TRON_RPC_URL ?? 'https://api.trongrid.io'
+const tronRpc = process.env.TRON_RPC_URL ?? 'https://tron.api.pocket.network'
 
 // Dynamic imports so the WDK managers are only loaded when the seed is present.
 const { default: WalletManagerBtc } = await import('@tetherto/wdk-wallet-btc')
