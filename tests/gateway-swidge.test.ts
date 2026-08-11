@@ -237,6 +237,43 @@ describe('GatewaySwidge', () => {
     expect(res.hash).toBe('a1b2c3')
   })
 
+  test.each([
+    [
+      'a tron route answered with an untyped (EVM) tx',
+      'tron',
+      undefined,
+      /evm transaction for a tron route/,
+    ],
+    ['an evm route answered with a tron tx', 'base', 'tron', /tron transaction for a evm route/],
+  ])('swidge rejects %s', async (_label, fromChain, txType, expected) => {
+    const client = fakeClient({
+      getQuote: vi.fn(async () => ({
+        offramp: { inputAmount: { amount: '1000000' }, outputAmount: { amount: '900' } },
+      })) as unknown as GatewayClient['getQuote'],
+      createOrder: vi.fn(async () => ({
+        offramp: {
+          order_id: 'o-mixed',
+          tx: { ...(txType ? { type: txType } : {}), to: REGISTRY, data: '0xfeed', value: '0' },
+        },
+      })) as unknown as GatewayClient['createOrder'],
+    })
+    const account = {
+      getAddress: async () => OWNER,
+      sendTransaction: vi.fn(async () => ({ hash: 'nope' })),
+    }
+    const sw = new GatewaySwidge(account, { fromChain, client })
+    await expect(
+      sw.swidge({
+        fromToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+        toToken: 'BTC',
+        toChain: 'bitcoin',
+        recipient: 'bc1qrcpt',
+        fromTokenAmount: 1000000n,
+      })
+    ).rejects.toThrow(expected)
+    expect(account.sendTransaction).not.toHaveBeenCalled()
+  })
+
   test('quoteSwidge from tron: ownerAddress is 0x-hex while sender stays Base58Check', async () => {
     const getQuote = vi.fn(async () => ({
       offramp: { inputAmount: { amount: '1000000' }, outputAmount: { amount: '900' } },

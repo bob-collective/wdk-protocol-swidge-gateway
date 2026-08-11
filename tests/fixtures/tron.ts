@@ -12,7 +12,7 @@ export const REGISTRY = 'TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax'
 export const USDT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
 export const SPENDER = 'TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7'
 
-const TIMESTAMP = 1_700_000_000_000
+const TIMESTAMP = Date.now()
 
 export interface TronTxOverrides {
   owner?: string
@@ -25,9 +25,12 @@ export interface TronTxOverrides {
   /** TRC-10 value riding along in the same contract; tronweb serializes both when set. */
   callTokenValue?: number
   tokenId?: number
+  /** Free-form memo; a node that adds one changes the txID the account signs. */
+  memo?: string
+  /** Multisig permission the call would be routed through; 0/absent is the owner key. */
+  permissionId?: number
 }
 
-/** A `TriggerSmartContract` transaction whose hex and txID match its raw_data. */
 export function buildTronTx(overrides: TronTxOverrides = {}) {
   const {
     owner = OWNER,
@@ -39,6 +42,8 @@ export function buildTronTx(overrides: TronTxOverrides = {}) {
     expiration = timestamp + 60_000,
     callTokenValue,
     tokenId,
+    memo,
+    permissionId,
   } = overrides
 
   const raw_data = {
@@ -56,6 +61,7 @@ export function buildTronTx(overrides: TronTxOverrides = {}) {
           type_url: 'type.googleapis.com/protocol.TriggerSmartContract',
         },
         type: 'TriggerSmartContract',
+        ...(permissionId ? { Permission_id: permissionId } : {}),
       },
     ],
     ref_block_bytes: '1234',
@@ -63,6 +69,7 @@ export function buildTronTx(overrides: TronTxOverrides = {}) {
     expiration,
     fee_limit: feeLimit,
     timestamp,
+    ...(memo ? { data: memo } : {}),
   }
 
   const tx = { visible: false, txID: '', raw_data, raw_data_hex: '' }

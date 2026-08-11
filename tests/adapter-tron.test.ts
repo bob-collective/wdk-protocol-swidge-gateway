@@ -159,6 +159,37 @@ describe('tronAdapter.send', () => {
       /no transaction for the order call/
     )
   })
+
+  test('surfaces a node that reports failure alongside a transaction', async () => {
+    const tronWeb = fakeTronWeb({
+      triggerSmartContract: vi.fn(async () => ({
+        result: { result: false, code: 'CONTRACT_VALIDATE_ERROR', message: 'no such contract' },
+        transaction: buildTronTx(),
+      })),
+    } as unknown as Partial<TronWebLike['transactionBuilder']>)
+    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).rejects.toThrow(
+      /rejected the order call: CONTRACT_VALIDATE_ERROR: no such contract/
+    )
+  })
+
+  test('surfaces a node that reports a top-level Error', async () => {
+    const tronWeb = fakeTronWeb({
+      triggerSmartContract: vi.fn(async () => ({
+        Error: 'class org.tron.core.exception.ContractValidateException',
+        transaction: buildTronTx(),
+      })),
+    } as unknown as Partial<TronWebLike['transactionBuilder']>)
+    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).rejects.toThrow(
+      /rejected the order call: class org.tron.core.exception/
+    )
+  })
+
+  test('a node that omits the status field is still accepted', async () => {
+    const tronWeb = fakeTronWeb()
+    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).resolves.toEqual({
+      txid: 't',
+    })
+  })
 })
 
 // The account signs `txID` alone and only checks that the owner is itself, so a node
@@ -246,10 +277,47 @@ describe('tronAdapter.send rejects a node response that is not the requested cal
   })
 
   test('a stretched expiration that widens the replay window', async () => {
-    const timestamp = 1_700_000_000_000
+    const timestamp = Date.now()
     const tronWeb = hostileTronWeb(buildTronTx({ timestamp, expiration: timestamp + 86_400_000 }))
     await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).rejects.toThrow(
       /expiration .* beyond the 600000ms we accept/
+    )
+  })
+
+  test('a transaction whose window already closed', async () => {
+    const timestamp = Date.now() - 120_000
+    const tronWeb = hostileTronWeb(buildTronTx({ timestamp, expiration: timestamp + 60_000 }))
+    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).rejects.toThrow(
+      /expired \d+ms ago/
+    )
+  })
+
+  test('an expiration that precedes its own timestamp', async () => {
+    const timestamp = Date.now() + 60_000
+    const tronWeb = hostileTronWeb(buildTronTx({ timestamp, expiration: timestamp - 1_000 }))
+    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).rejects.toThrow(
+      /expires before it was created/
+    )
+  })
+
+  test('a missing timestamp, which would leave the window unbounded', async () => {
+    const tronWeb = hostileTronWeb(buildTronTx({ timestamp: 0, expiration: Date.now() + 60_000 }))
+    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).rejects.toThrow(
+      /no timestamp/
+    )
+  })
+
+  test('an injected memo, which the signer would commit to via txID', async () => {
+    const tronWeb = hostileTronWeb(buildTronTx({ memo: '6465616462656566' }))
+    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).rejects.toThrow(
+      /memo we did not ask for/
+    )
+  })
+
+  test('a Permission_id routing the call through an unexamined multisig permission', async () => {
+    const tronWeb = hostileTronWeb(buildTronTx({ permissionId: 2 }))
+    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).rejects.toThrow(
+      /Permission_id 2, expected the owner permission/
     )
   })
 
@@ -317,11 +385,12 @@ describe('tronAdapter.getRequiredApproval', () => {
     ).toBeNull()
   })
 
-  test('returns null for native TRX in either spelling, without an allowance call', async () => {
+  test('returns null for native TRX in every spelling, without an allowance call', async () => {
     const tronWeb = fakeTronWeb()
     for (const native of [
       '',
       '0x0000000000000000000000000000000000000000',
+      '410000000000000000000000000000000000000000',
       'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',
     ]) {
       expect(
@@ -338,6 +407,41 @@ describe('tronAdapter.getRequiredApproval', () => {
     await expect(
       tronAdapter.getRequiredApproval(account, USDT, SPENDER, 500n, { tronWeb })
     ).rejects.toThrow(/allowance\(\) returned no result/)
+  })
+
+  test('throws on revert data rather than reading it as a huge allowance', async () => {
+    const revert =
+      '08c379a0' +
+      '0000000000000000000000000000000000000000000000000000000000000020' +
+      '0000000000000000000000000000000000000000000000000000000000000004' +
+      '6f6f70730000000000000000000000000000000000000000000000000000000000'
+    const tronWeb = fakeTronWeb({
+      triggerConstantContract: vi.fn(async () => ({
+        result: { result: false },
+        constant_result: [revert],
+      })),
+    } as unknown as Partial<TronWebLike['transactionBuilder']>)
+    await expect(
+      tronAdapter.getRequiredApproval(account, USDT, SPENDER, 500n, { tronWeb })
+    ).rejects.toThrow(/rejected the allowance\(\) read/)
+  })
+
+  test('throws on a result that is not one 32-byte word, even when the node claims success', async () => {
+    const tronWeb = fakeTronWeb({
+      triggerConstantContract: vi.fn(async () => ({ constant_result: ['deadbeef'] })),
+    } as unknown as Partial<TronWebLike['transactionBuilder']>)
+    await expect(
+      tronAdapter.getRequiredApproval(account, USDT, SPENDER, 500n, { tronWeb })
+    ).rejects.toThrow(/expected one 32-byte uint256 word/)
+  })
+
+  test('throws when allowance() answers with more than one word', async () => {
+    const tronWeb = fakeTronWeb({
+      triggerConstantContract: vi.fn(async () => ({ constant_result: [word(1000n), word(1n)] })),
+    } as unknown as Partial<TronWebLike['transactionBuilder']>)
+    await expect(
+      tronAdapter.getRequiredApproval(account, USDT, SPENDER, 500n, { tronWeb })
+    ).rejects.toThrow(/returned 2 results .* expected 1/)
   })
 })
 
@@ -407,6 +511,23 @@ describe('tronAdapter.simulate', () => {
     expect(out.valid).toBe(false)
     expect(out.reason).toMatch(/REVERT/)
     expect(out.feeEstimate).toBeNull()
+  })
+
+  test('a failing allowance read reports valid:false rather than throwing', async () => {
+    const tronWeb = fakeTronWeb({
+      triggerConstantContract: vi.fn(async () => {
+        throw new Error('node unreachable')
+      }),
+    } as unknown as Partial<TronWebLike['transactionBuilder']>)
+    const account = { getAddress: async () => OWNER }
+    const out = await tronAdapter.simulate(
+      account,
+      { tx: TX },
+      { tronWeb, token: USDT, amount: 500n }
+    )
+    expect(out.valid).toBe(false)
+    expect(out.reason).toMatch(/node unreachable/)
+    expect(out.requiredApproval).toBeNull()
   })
 
   test('a mismatched build reports valid:false rather than throwing', async () => {

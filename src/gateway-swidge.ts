@@ -24,11 +24,34 @@ import { toSwidgeQuote } from './map/quote.js'
 import { toSwidgeStatus } from './map/status.js'
 import { toSupportedChains, toSupportedTokens } from './map/routes.js'
 import { orderPayload } from './map/order.js'
-import type { BtcOrderPayload, EvmOrderPayload, TronOrderPayload } from './map/order.js'
+import type {
+  BtcOrderPayload,
+  EvmOrderPayload,
+  OrderPayload,
+  TronOrderPayload,
+} from './map/order.js'
 import type { SwidgeSimulation } from './types.js'
+import { GatewaySwidgeError, ERR } from './errors.js'
 
 const DEFAULT_SLIPPAGE = 0.03
 const BOB_BEARER_TOKEN = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
+
+const PAYLOAD_FAMILY: Record<OrderPayload['kind'], string> = {
+  btc: 'bitcoin',
+  evm: 'evm',
+  tron: 'tron',
+}
+
+function assertPayloadFamily(payload: OrderPayload, srcFamily: string): void {
+  const family = PAYLOAD_FAMILY[payload.kind]
+  if (family !== srcFamily) {
+    throw new GatewaySwidgeError(
+      ERR.VALIDATION,
+      `create-order returned a ${payload.kind} transaction for a ${srcFamily} route`,
+      { cause: payload }
+    )
+  }
+}
 
 export interface GatewaySwidgeConfig {
   apiUrl?: string
@@ -166,6 +189,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       variant,
       quote as Record<string, unknown>
     )
+    assertPayloadFamily(payload, srcFamily)
     const adapter = getAdapter(srcFamily)
 
     let txid: string
@@ -252,6 +276,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       variant,
       quote as Record<string, unknown>
     )
+    assertPayloadFamily(payload, srcFamily)
     const adapter = getAdapter(srcFamily)
     const sq = toSwidgeQuote(quote as Record<string, unknown>, {
       affiliateApplied: params.affiliates !== undefined,
@@ -365,6 +390,7 @@ export class GatewaySwidge extends SwidgeProtocol {
         variant,
         quote as Record<string, unknown>
       )
+      assertPayloadFamily(payload, srcFamily)
       if (payload.kind === 'btc')
         throw new Error('expected a contract-call payload for approval check')
       spender = payload.tx.to

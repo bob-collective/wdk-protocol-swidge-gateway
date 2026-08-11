@@ -5,9 +5,13 @@ const ALLOWANCE_SELECTOR = 'allowance(address,address)'
 
 const DEFAULT_FEE_LIMIT_SUN = 100_000_000
 
-/** Native TRX, spelled two ways: the EVM zero address and its Base58Check form. */
+/**
+ * Native TRX, spelled three ways: the EVM zero address, the Tron hex form of the same
+ * (the `0x41` version byte plus twenty zero bytes) and its Base58Check form.
+ */
 const NATIVE_TOKENS = new Set([
   '0x0000000000000000000000000000000000000000',
+  '410000000000000000000000000000000000000000',
   'T9yD14Nj9j7xAB4dbGeiX9h8unkKHxuWwb',
 ])
 
@@ -35,6 +39,11 @@ export interface TronApprovalCall {
   options: { feeLimit: number }
 }
 
+interface TronNodeStatus {
+  result?: { result?: boolean; code?: string; message?: string }
+  Error?: string
+}
+
 export interface TronWebLike {
   transactionBuilder: {
     triggerSmartContract(
@@ -43,14 +52,14 @@ export interface TronWebLike {
       options: Record<string, unknown>,
       parameters: unknown[],
       issuerAddress: string
-    ): Promise<{ transaction?: TronPrebuiltTx }>
+    ): Promise<TronNodeStatus & { transaction?: TronPrebuiltTx }>
     triggerConstantContract(
       contractAddress: string,
       functionSelector: string,
       options: Record<string, unknown>,
       parameters: unknown[],
       issuerAddress: string
-    ): Promise<{ constant_result?: string[] }>
+    ): Promise<TronNodeStatus & { constant_result?: string[] }>
   }
 }
 
@@ -133,6 +142,18 @@ function toSun(value: string | undefined, fallback: number, field: string): numb
   return Number(big)
 }
 
+function assertNodeAccepted(res: TronNodeStatus | undefined, what: string): void {
+  if (!res) return
+  const rejected = res.result != null && res.result.result === false
+  if (!rejected && !res.Error) return
+  const detail = [res.result?.code, res.result?.message ?? res.Error].filter(Boolean).join(': ')
+  throw new GatewaySwidgeError(
+    ERR.HTTP,
+    `tron node rejected ${what}${detail ? `: ${detail}` : ''}`,
+    { cause: res }
+  )
+}
+
 async function buildUnsignedTx(
   tronWeb: TronWebLike,
   owner: string,
@@ -152,6 +173,7 @@ async function buildUnsignedTx(
     [],
     owner
   )
+  assertNodeAccepted(built, 'the order call')
   if (!built || !built.transaction) {
     throw new GatewaySwidgeError(ERR.HTTP, 'tron node returned no transaction for the order call', {
       cause: built,
@@ -169,6 +191,7 @@ const MAX_CLOCK_SKEW_MS = 10 * 60 * 1000
 interface TronRawContract {
   type?: string
   parameter?: { value?: Record<string, unknown> }
+  Permission_id?: number
 }
 
 interface TronRawData {
@@ -176,6 +199,7 @@ interface TronRawData {
   fee_limit?: number
   timestamp?: number
   expiration?: number
+  data?: string
 }
 
 /**
@@ -212,6 +236,12 @@ async function assertBuiltTxMatches(
   if (contract.type !== 'TriggerSmartContract') {
     fail(`a ${String(contract.type)}, expected a TriggerSmartContract`)
   }
+  if (rawData.data != null && rawData.data !== '') {
+    fail(`a transaction carrying a memo we did not ask for: ${String(rawData.data)}`)
+  }
+  if (contract.Permission_id != null && Number(contract.Permission_id) !== 0) {
+    fail(`a Permission_id ${String(contract.Permission_id)}, expected the owner permission (0)`)
+  }
 
   let bound = false
   try {
@@ -246,11 +276,14 @@ async function assertBuiltTxMatches(
   const now = Date.now()
   const timestamp = Number(rawData.timestamp ?? 0)
   const expiration = Number(rawData.expiration ?? 0)
+  if (!(timestamp > 0)) fail('a transaction with no timestamp')
   if (timestamp > now + MAX_CLOCK_SKEW_MS) {
     fail(`a timestamp ${timestamp - now}ms ahead of local time`)
   }
   if (!(expiration > 0)) fail('a transaction with no expiration')
-  const window = expiration - (timestamp > 0 ? timestamp : now)
+  if (expiration <= timestamp) fail('a transaction that expires before it was created')
+  if (expiration <= now) fail(`a transaction that expired ${now - expiration}ms ago`)
+  const window = expiration - timestamp
   if (window > MAX_TX_WINDOW_MS) {
     fail(`an expiration ${window}ms out, beyond the ${MAX_TX_WINDOW_MS}ms we accept`)
   }
@@ -279,11 +312,27 @@ export const tronAdapter = {
       ],
       owner
     )
-    const word = res && res.constant_result && res.constant_result[0]
-    if (!word) {
+    assertNodeAccepted(res, `the allowance() read on ${tokenAddress}`)
+    const results = res && Array.isArray(res.constant_result) ? res.constant_result : []
+    if (results.length === 0) {
       throw new GatewaySwidgeError(ERR.HTTP, `allowance() returned no result for ${tokenAddress}`, {
         cause: res,
       })
+    }
+    if (results.length !== 1) {
+      throw new GatewaySwidgeError(
+        ERR.HTTP,
+        `allowance() returned ${results.length} results for ${tokenAddress}, expected 1`,
+        { cause: res }
+      )
+    }
+    const [word] = results
+    if (typeof word !== 'string' || !/^[0-9a-fA-F]{64}$/.test(word)) {
+      throw new GatewaySwidgeError(
+        ERR.HTTP,
+        `allowance() returned a ${String(word).length}-char result for ${tokenAddress}, expected one 32-byte uint256 word`,
+        { cause: res }
+      )
     }
     const allowance = BigInt(`0x${word}`)
     if (allowance >= BigInt(amount)) return null
@@ -311,12 +360,18 @@ export const tronAdapter = {
     opts: TronOpts & { token?: string; spender?: string; amount?: bigint | string | number } = {}
   ): Promise<TronSimulateResult> {
     const spender = opts.spender ?? payload.tx.to
-    const requiredApproval =
-      opts.token != null && opts.amount != null
-        ? await this.getRequiredApproval(account, opts.token, spender, opts.amount, opts)
-        : null
+    let requiredApproval: { token: string; spender: string; amount: bigint } | null = null
 
     try {
+      if (opts.token != null && opts.amount != null) {
+        requiredApproval = await this.getRequiredApproval(
+          account,
+          opts.token,
+          spender,
+          opts.amount,
+          opts
+        )
+      }
       const tronWeb = await resolveTronWeb(account, opts)
       const owner = await account.getAddress()
       const unsigned = await buildUnsignedTx(tronWeb, owner, payload.tx)

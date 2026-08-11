@@ -203,6 +203,26 @@ describe('evmAdapter.simulate()', () => {
     expect(result.requiredApproval).toEqual({ token: '0xtok', spender: '0xspender', amount: 1000n })
   })
 
+  test('valid: false when the allowance read itself fails, no rethrow', async () => {
+    const account = {
+      getAllowance: vi.fn(async () => {
+        throw new Error('node unreachable')
+      }),
+      sendTransaction: vi.fn(),
+      quoteSendTransaction: vi.fn(async () => ({ fee: 21000n })),
+    }
+    const payload = { kind: 'evm' as const, tx: { to: '0xspender', data: '0xd', value: '0' } }
+    const result = await evmAdapter.simulate(account, payload, {
+      token: '0xtok',
+      spender: '0xspender',
+      amount: 1000n,
+    })
+    expect(result.valid).toBe(false)
+    expect(result.reason).toContain('node unreachable')
+    expect(result.requiredApproval).toBeNull()
+    expect(account.quoteSendTransaction).not.toHaveBeenCalled()
+  })
+
   test('throws NOT_SUPPORTED when quoteSendTransaction is missing', async () => {
     const account = {
       getAllowance: vi.fn(async () => 0n),
