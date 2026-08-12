@@ -34,12 +34,10 @@ const USDT_BALANCE_ABI = ['function balanceOf(address owner) view returns (uint2
 const PHASES = ['onramp', 'offramp', 'tron-offramp', 'status'] as const
 type Phase = (typeof PHASES)[number]
 
-// Approval polling budget: 30 × 10 s = 5 min.
 const POLL_INTERVAL_MS = 10_000
 const MAX_POLLS = 30
 const POLL_TIMEOUT_MIN = (MAX_POLLS * POLL_INTERVAL_MS) / 60_000
 
-/** Prints an operator-facing error and aborts. Returns `never`, so callers narrow after it. */
 function fail(message: string): never {
   console.error(`ERROR: ${message}`)
   process.exit(1)
@@ -47,15 +45,6 @@ function fail(message: string): never {
 
 function isPhase(value: string | undefined): value is Phase {
   return value !== undefined && (PHASES as readonly string[]).includes(value)
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/** `TransactionResult.fee` is typed as required, but this script never assumes it. */
-function formatFee(fee: bigint | undefined): string {
-  return fee !== undefined ? String(fee) : 'n/a'
 }
 
 if (!TEST_SEED) {
@@ -77,12 +66,10 @@ const { default: WalletManagerEvm } = await import('@tetherto/wdk-wallet-evm')
 const { default: WalletManagerTron } = await import('@tetherto/wdk-wallet-tron')
 const { GatewaySwidge, buildTronApproval } = await import('../dist/index.js')
 
-// Derived from the module's own signatures so these can't drift from the SDK.
 type Swidge = InstanceType<typeof GatewaySwidge>
 type SwidgeResult = Awaited<ReturnType<Swidge['swidge']>>
 type RequiredApproval = NonNullable<Awaited<ReturnType<Swidge['getRequiredApproval']>>>
 
-// Derive every account from the same seed (account index 0 on each chain).
 const btcWallet = new WalletManagerBtc(TEST_SEED, { network: 'bitcoin' })
 const btcAccount = await btcWallet.getAccount(0)
 const btcAddress: string = await btcAccount.getAddress()
@@ -95,7 +82,6 @@ const tronWallet = new WalletManagerTron(TEST_SEED, { provider: TRON_RPC_URL })
 const tronAccount = await tronWallet.getAccount(0)
 const tronAddress: string = await tronAccount.getAddress()
 
-/** Runs a spendful phase, reporting any failure against the phase name and aborting. */
 async function runPhase(name: Phase, body: () => Promise<void>): Promise<void> {
   try {
     await body()
@@ -112,7 +98,9 @@ function logApprovalRequired(approval: RequiredApproval): void {
 }
 
 function logApprovalTx(result: { hash: string; fee?: bigint }): void {
-  console.log(`Approval tx submitted: hash=${result.hash}  fee=${formatFee(result.fee)}`)
+  // `TransactionResult.fee` is typed as required, but this script never assumes it.
+  const fee = result.fee === undefined ? 'n/a' : String(result.fee)
+  console.log(`Approval tx submitted: hash=${result.hash}  fee=${fee}`)
 }
 
 function logSwidgeResult(txLabel: string, result: SwidgeResult): void {
@@ -122,11 +110,7 @@ function logSwidgeResult(txLabel: string, result: SwidgeResult): void {
   console.log(`fromTokenAmount="${String(result.fromTokenAmount)}"`)
 }
 
-/**
- * Polls until the approval is in effect, aborting if it never lands. `probe` reports
- * the per-attempt log detail alongside the verdict, so each chain can print what it
- * actually measured — an allowance read on EVM, a re-check on Tron.
- */
+/** `probe` reports its own log detail, so each chain prints what it actually measured. */
 async function waitForApproval(
   probe: () => Promise<{ done: boolean; detail: string }>
 ): Promise<void> {
@@ -134,7 +118,7 @@ async function waitForApproval(
     `Polling for approval to take effect (every ${POLL_INTERVAL_MS / 1000} s, max ${POLL_TIMEOUT_MIN} min)...`
   )
   for (let attempt = 1; attempt <= MAX_POLLS; attempt++) {
-    await sleep(POLL_INTERVAL_MS)
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
     const { done, detail } = await probe()
     console.log(`  [poll ${attempt}/${MAX_POLLS}] ${detail}`)
     if (done) {
@@ -146,10 +130,7 @@ async function waitForApproval(
 }
 
 switch (PHASE) {
-  // -------------------------------------------------------------------------
-  // onramp — BTC → USDT@Ethereum
-  // Broadcasts a real BTC transaction. Irreversible.
-  // -------------------------------------------------------------------------
+  // BTC → USDT@Ethereum. Broadcasts a real BTC transaction. Irreversible.
   case 'onramp': {
     const fromTokenAmount = requireAmount('sats, integer')
     console.log(
@@ -171,10 +152,7 @@ switch (PHASE) {
     break
   }
 
-  // -------------------------------------------------------------------------
-  // offramp — USDT@Ethereum → BTC
-  // Checks + waits for ERC-20 approval, then broadcasts EVM tx. Irreversible.
-  // -------------------------------------------------------------------------
+  // USDT@Ethereum → BTC. Broadcasts a real EVM transaction. Irreversible.
   case 'offramp': {
     const fromTokenAmount = requireAmount('USDT 6-decimal units, integer')
     console.log(
@@ -192,7 +170,6 @@ switch (PHASE) {
         refundAddress: evmAddress,
       }
 
-      // Check the required ERC-20 approval before sending.
       const approval = await sw.getRequiredApproval(opts)
       if (approval === null) {
         console.log('No approval required (allowance already sufficient).')
@@ -214,11 +191,8 @@ switch (PHASE) {
     break
   }
 
-  // -------------------------------------------------------------------------
-  // tron-offramp — USDT@Tron → BTC
-  // Grants the TRC-20 approval (no approve() on WalletAccountTron — the call is
-  // built by buildTronApproval), then broadcasts the Tron tx. Irreversible.
-  // -------------------------------------------------------------------------
+  // USDT@Tron → BTC. Broadcasts a real Tron transaction. Irreversible.
+  // The approval goes out via buildTronApproval — WalletAccountTron has no approve().
   case 'tron-offramp': {
     const fromTokenAmount = requireAmount('USDT 6-decimal units, integer')
     console.log(
@@ -242,8 +216,7 @@ switch (PHASE) {
       } else {
         logApprovalRequired(approval)
         logApprovalTx(await tronAccount.sendTransaction(buildTronApproval(approval)))
-        // getRequiredApproval re-reads the allowance and returns null once it covers
-        // the amount; the spender is cached, so this costs no extra gateway orders.
+        // The spender is cached, so re-checking costs no extra gateway orders.
         await waitForApproval(async () => {
           const still = await sw.getRequiredApproval(opts)
           return { done: still === null, detail: `approvalStillRequired=${still !== null}` }
@@ -256,9 +229,7 @@ switch (PHASE) {
     break
   }
 
-  // -------------------------------------------------------------------------
-  // status — read order status + wallet balances (read-only, no tx)
-  // -------------------------------------------------------------------------
+  // Read order status + wallet balances. Read-only, no tx.
   case 'status': {
     if (!ORDER_ID) fail('ORDER_ID is required for status phase')
 
@@ -266,28 +237,30 @@ switch (PHASE) {
       // Status lookup is read-only; any account works — use EVM for convenience.
       const sw = new GatewaySwidge(evmAccount, { fromChain: 'ethereum' })
       console.log(JSON.stringify(await sw.getSwidgeStatus(ORDER_ID), null, 2))
-
-      // Print current USDT balance on EVM using ethers (already a project dep).
-      const { JsonRpcProvider, Contract } = await import('ethers')
-      const usdt = new Contract(USDT, USDT_BALANCE_ABI, new JsonRpcProvider(EVM_RPC_URL))
-      const usdtBalance: bigint = await usdt.balanceOf(evmAddress)
-
-      console.log(`EVM address: ${evmAddress}`)
-      console.log(`USDT balance (6dp): ${String(usdtBalance)}`)
-      console.log(`BTC address: ${btcAddress}`)
     } catch (err) {
       console.error(`status failed ORDER_ID=${ORDER_ID}:`, err)
       process.exit(1)
     }
 
+    // Balances are supplementary: a failed lookup must not mask the status above.
     try {
-      const tronUsdt = await tronAccount.getTokenBalance(USDT_TRON)
-      const trx = await tronAccount.getBalance()
-      console.log(`Tron address: ${tronAddress}`)
-      console.log(`USDT@tron balance (6dp): ${String(tronUsdt)}`)
-      console.log(`TRX balance (sun): ${String(trx)}`)
+      const { JsonRpcProvider, Contract } = await import('ethers')
+      const usdt = new Contract(USDT, USDT_BALANCE_ABI, new JsonRpcProvider(EVM_RPC_URL))
+      console.log(`EVM address: ${evmAddress}`)
+      console.log(`USDT balance (6dp): ${String(await usdt.balanceOf(evmAddress))}`)
+      console.log(`BTC address: ${btcAddress}`)
     } catch (err) {
-      console.warn('Tron balance lookup failed (status above is unaffected):', err)
+      console.warn('EVM balance lookup failed:', err)
+    }
+
+    try {
+      console.log(`Tron address: ${tronAddress}`)
+      console.log(
+        `USDT@tron balance (6dp): ${String(await tronAccount.getTokenBalance(USDT_TRON))}`
+      )
+      console.log(`TRX balance (sun): ${String(await tronAccount.getBalance())}`)
+    } catch (err) {
+      console.warn('Tron balance lookup failed:', err)
     }
     break
   }

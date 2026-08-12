@@ -5,10 +5,7 @@ const ALLOWANCE_SELECTOR = 'allowance(address,address)'
 
 const DEFAULT_FEE_LIMIT_SUN = 100_000_000
 
-/**
- * Native TRX, spelled three ways: the EVM zero address, the Tron hex form of the same
- * (the `0x41` version byte plus twenty zero bytes) and its Base58Check form.
- */
+/** Native TRX: the EVM zero address, its Tron hex form (`0x41` + 20 zero bytes), and Base58Check. */
 const NATIVE_TOKENS = new Set([
   '0x0000000000000000000000000000000000000000',
   '410000000000000000000000000000000000000000',
@@ -20,7 +17,6 @@ function isNativeToken(tokenAddress: string): boolean {
   return NATIVE_TOKENS.has(tokenAddress) || NATIVE_TOKENS.has(tokenAddress.toLowerCase())
 }
 
-/** A tronweb transaction, as returned by `transactionBuilder.*`. */
 export interface TronPrebuiltTx {
   txID: string
   raw_data: Record<string, unknown>
@@ -96,45 +92,34 @@ export interface TronSimulateResult {
   reason?: string
 }
 
+/** One client per node URL; re-inserting on hit makes the eviction least-recently-used. */
 const PROVIDER_CACHE_MAX = 8
 const providerCache = new Map<string, TronWebLike>()
 
-function getCachedProvider(url: string): TronWebLike | undefined {
-  const cached = providerCache.get(url)
-  if (!cached) return undefined
-  providerCache.delete(url)
-  providerCache.set(url, cached)
-  return cached
-}
-
-function cacheProvider(url: string, provider: TronWebLike): void {
-  providerCache.set(url, provider)
-  while (providerCache.size > PROVIDER_CACHE_MAX) {
-    const oldest = providerCache.keys().next().value
-    if (oldest === undefined) return
-    providerCache.delete(oldest)
-  }
-}
-
 async function resolveTronWeb(account: TronAccount, opts: TronOpts): Promise<TronWebLike> {
   if (opts.tronWeb) return opts.tronWeb
-  if (opts.tronProvider) {
-    const cached = getCachedProvider(opts.tronProvider)
-    if (cached) return cached
-    // Imported lazily: consumers that never touch Tron never load tronweb.
-    const { TronWeb } = await import('tronweb')
-    const built = new TronWeb({ fullHost: opts.tronProvider }) as unknown as TronWebLike
-    cacheProvider(opts.tronProvider, built)
-    return built
+  const url = opts.tronProvider
+  if (url) {
+    let provider = providerCache.get(url)
+    if (provider) {
+      providerCache.delete(url)
+    } else {
+      // Imported lazily: consumers that never touch Tron never load tronweb.
+      const { TronWeb } = await import('tronweb')
+      provider = new TronWeb({ fullHost: url }) as unknown as TronWebLike
+      while (providerCache.size >= PROVIDER_CACHE_MAX) {
+        providerCache.delete(providerCache.keys().next().value as string)
+      }
+    }
+    providerCache.set(url, provider)
+    return provider
   }
   if (account && account._tronWeb) return account._tronWeb
   throw new GatewaySwidgeError(
     ERR.NOT_SUPPORTED,
-    'no tron provider available: pass config.tronWeb or config.tronProvider, ' +
-      'or use a WalletAccountTron connected to a provider. Note that those two ' +
-      'options only cover building the order call and reading allowances — ' +
-      'broadcasting always goes through the account, which must be connected ' +
-      'to a provider of its own'
+    'no tron provider available: pass config.tronWeb or config.tronProvider, or use a ' +
+      "WalletAccountTron connected to a provider. Neither option replaces the account's " +
+      'own provider, which broadcasts'
   )
 }
 
@@ -161,13 +146,9 @@ function toSun(value: string | undefined, fallback: number, field: string): numb
 function assertNodeAccepted(res: TronNodeStatus | undefined, what: string): void {
   if (!res) return
   const status = res.result
-  const rejected =
-    status === false || (status != null && typeof status === 'object' && status.result === false)
-  if (!rejected && !res.Error) return
-  const message =
-    (typeof status === 'object' && status != null ? status.message : undefined) ?? res.Error
-  const code = typeof status === 'object' && status != null ? status.code : undefined
-  const detail = [code, message]
+  const detailed = typeof status === 'object' && status !== null ? status : undefined
+  if (status !== false && detailed?.result !== false && !res.Error) return
+  const detail = [detailed?.code, detailed?.message ?? res.Error]
     .filter((part) => typeof part === 'string' && part !== '')
     .join(': ')
   throw new GatewaySwidgeError(
@@ -208,7 +189,6 @@ async function buildUnsignedTx(
 
 /** Longest transaction lifetime we accept; tronweb's own default window is 60s. */
 const MAX_TX_WINDOW_MS = 10 * 60 * 1000
-/** How far ahead of our own clock a node's `timestamp` may sit before we distrust it. */
 const MAX_CLOCK_SKEW_MS = 10 * 60 * 1000
 
 interface TronRawContract {
@@ -225,10 +205,7 @@ interface TronRawData {
   data?: string
 }
 
-/**
- * Re-checks the node's built transaction against the call we asked for, before the
- * account signs its `txID`. See AGENTS.md for why tronweb's own check isn't enough.
- */
+/** See AGENTS.md for why tronweb's own response check isn't enough on its own. */
 async function assertBuiltTxMatches(
   built: TronPrebuiltTx,
   expected: { owner: string; to: string; data: string; callValue: number; feeLimit: number }
@@ -294,8 +271,8 @@ async function assertBuiltTxMatches(
   check('call_token_value', Number(value.call_token_value ?? 0), 0)
   check('token_id', Number(value.token_id ?? 0), 0)
 
-  // Timing is the one part a node legitimately supplies, so it is bounded rather than
-  // matched: a stretched expiration widens the replay window for the signed transaction.
+  // Timing is the one part a node legitimately supplies, so bound it rather than match it:
+  // a stretched expiration widens the replay window for the signed transaction.
   const now = Date.now()
   const timestamp = Number(rawData.timestamp ?? 0)
   const expiration = Number(rawData.expiration ?? 0)
@@ -339,11 +316,6 @@ export const tronAdapter = {
     )
     assertNodeAccepted(res, `the allowance() read on ${tokenAddress}`)
     const results = res && Array.isArray(res.constant_result) ? res.constant_result : []
-    if (results.length === 0) {
-      throw new GatewaySwidgeError(ERR.HTTP, `allowance() returned no result for ${tokenAddress}`, {
-        cause: res,
-      })
-    }
     if (results.length !== 1) {
       throw new GatewaySwidgeError(
         ERR.HTTP,
@@ -359,9 +331,9 @@ export const tronAdapter = {
         { cause: res }
       )
     }
-    const allowance = BigInt(`0x${word}`)
-    if (allowance >= BigInt(amount)) return null
-    return { token: tokenAddress, spender, amount: BigInt(amount) }
+    const required = BigInt(amount)
+    if (BigInt(`0x${word}`) >= required) return null
+    return { token: tokenAddress, spender, amount: required }
   },
 
   async send(

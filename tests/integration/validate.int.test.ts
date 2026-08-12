@@ -138,21 +138,12 @@ const RUN = !!process.env.TEST_SEED
       expect('evm' in sim).toBe(true)
       if (!('evm' in sim)) return
 
-      // A missing standing approval surfaces as valid:false + requiredApproval present.
-      // This is a legitimate outcome when the account has not pre-approved the spender.
-      // The test accepts EITHER a fully-valid simulation OR the expected "approval needed" path.
       const { valid, requiredApproval } = sim.evm
       const approvalNeeded = !valid && requiredApproval !== null
 
-      // At least one of the two valid outcomes must hold:
-      //   (a) simulation succeeded with valid: true, or
-      //   (b) approval is needed (valid: false, requiredApproval non-null).
-      // Anything else (e.g. a hard network error yielding valid:false + requiredApproval:null)
-      // is a genuine failure.
       expect(valid || approvalNeeded).toBe(true)
 
       if (!valid && approvalNeeded) {
-        // Approval-needed path: document that this is expected without Tenderly state-override.
         expect(requiredApproval).toMatchObject({
           token: USDT_ETHEREUM,
           spender: expect.stringMatching(/^0x/),
@@ -188,8 +179,6 @@ const RUN = !!process.env.TEST_SEED
         fromTokenAmount: AMOUNT_USDT,
       })
       expect(sim.broadcast).toBe(false)
-      // The gateway must tag the order tx as tron — an `evm` payload here means the
-      // wire shape changed and the module would sign against the wrong chain family.
       expect('tron' in sim).toBe(true)
       if (!('tron' in sim)) return
 
@@ -209,7 +198,6 @@ const RUN = !!process.env.TEST_SEED
           spender: expect.stringMatching(/^T/),
           amount: expect.any(BigInt),
         })
-        // buildTronApproval must produce a call the account can send as-is.
         const { buildTronApproval } = await import('../../src/index.js')
         const approvalCall = buildTronApproval(requiredApproval)
         await expect(tronAccount.quoteSendTransaction(approvalCall)).resolves.toMatchObject({

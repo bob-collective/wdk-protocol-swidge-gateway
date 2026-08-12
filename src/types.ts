@@ -13,31 +13,13 @@ export type { BtcSimulateResult, EvmSimulateResult, TronSimulateResult }
  * `broadcast` is always `false` — no transaction was sent, no registerTx called.
  * An orphaned Gateway order is created as a side-effect (the gateway reconciles these).
  */
-export type SwidgeSimulation =
-  | {
-      variant: 'onramp' | 'offramp' | 'tokenSwap'
-      orderId: string
-      /** Mapped quote (same shape as `quoteSwidge` output). */
-      quote: Record<string, unknown>
-      broadcast: false
-      onramp: BtcSimulateResult
-    }
-  | {
-      variant: 'onramp' | 'offramp' | 'tokenSwap'
-      orderId: string
-      /** Mapped quote (same shape as `quoteSwidge` output). */
-      quote: Record<string, unknown>
-      broadcast: false
-      evm: EvmSimulateResult
-    }
-  | {
-      variant: 'onramp' | 'offramp' | 'tokenSwap'
-      orderId: string
-      /** Mapped quote (same shape as `quoteSwidge` output). */
-      quote: Record<string, unknown>
-      broadcast: false
-      tron: TronSimulateResult
-    }
+export type SwidgeSimulation = {
+  variant: 'onramp' | 'offramp' | 'tokenSwap'
+  orderId: string
+  /** Mapped quote (same shape as `quoteSwidge` output). */
+  quote: Record<string, unknown>
+  broadcast: false
+} & ({ onramp: BtcSimulateResult } | { evm: EvmSimulateResult } | { tron: TronSimulateResult })
 
 export interface GetQuoteParamsV3 {
   srcChain: string

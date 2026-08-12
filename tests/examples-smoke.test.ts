@@ -86,8 +86,7 @@ function makeTronHttp() {
 }
 
 function makeTronAccount() {
-  // The allowance only appears once the approve() call has been sent, so the example
-  // has to re-read it rather than assume the broadcast landed.
+  // The allowance only appears once approve() has been sent, so the example must re-read it.
   let approved = false
   return {
     getAddress: async () => OWNER,
@@ -147,7 +146,6 @@ describe('examples smoke', () => {
     const res = await (offrampTron as any)({ account, http })
     expect(res.id).toBe('tron-1')
     expect(res.hash).toBe('a1b2c3')
-    // Two sends: the approve() call descriptor, then the pre-built order call.
     expect(account.sendTransaction).toHaveBeenCalledTimes(2)
     expect(account.sendTransaction.mock.calls[0][0]).toMatchObject({
       functionSelector: 'approve(address,uint256)',
@@ -168,11 +166,8 @@ describe('examples smoke', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (offrampTron as any)({ account, http })
 
-    // One read to discover the approval is needed, then at least one more to confirm it
-    // landed. A single read would mean the example swidged on an unconfirmed approve().
     expect(allowanceCalls.mock.calls.length).toBeGreaterThanOrEqual(2)
 
-    // And the order call must come after that confirming read, not before it.
     const orderSend = account.sendTransaction.mock.invocationCallOrder[1]
     const lastAllowanceRead = allowanceCalls.mock.invocationCallOrder.at(-1)!
     expect(lastAllowanceRead).toBeLessThan(orderSend)

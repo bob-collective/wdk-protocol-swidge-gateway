@@ -1,8 +1,6 @@
 import { GatewaySwidgeError, ERR } from '../errors.js'
 import type { SwidgeVariant } from '../chains.js'
 
-export type OrderKind = 'btc' | 'evm' | 'tron'
-
 export interface BtcOrderPayload {
   orderId: string
   kind: 'btc'
@@ -82,22 +80,21 @@ export function orderPayload(
       amount: BigInt(quote!.onramp!.inputAmount.amount),
     }
   }
-  const type = o.tx.type
-  if (type === 'tron') {
+  const tx = o.tx
+  if (!tx) {
+    throw new GatewaySwidgeError(ERR.HTTP, `create-order missing ${variant}.tx`, { cause: order })
+  }
+  if (tx.type === 'tron') {
     return {
       orderId: o.order_id,
       kind: 'tron',
-      tx: { to: o.tx.to, data: o.tx.data, value: o.tx.value, feeLimit: o.tx.feeLimit },
+      tx: { to: tx.to, data: tx.data, value: tx.value, feeLimit: tx.feeLimit },
     }
   }
-  if (type != null && type !== 'evm') {
-    throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, `order tx type '${type}' is not supported`, {
+  if (tx.type != null && tx.type !== 'evm') {
+    throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, `order tx type '${tx.type}' is not supported`, {
       cause: order,
     })
   }
-  return {
-    orderId: o.order_id,
-    kind: 'evm',
-    tx: { to: o.tx.to, data: o.tx.data, value: o.tx.value },
-  }
+  return { orderId: o.order_id, kind: 'evm', tx: { to: tx.to, data: tx.data, value: tx.value } }
 }

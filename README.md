@@ -164,11 +164,9 @@ const result = await sw.swidge({
 
 ### USDT on Tron → BTC
 
-Requires `@tetherto/wdk-wallet-tron` **≥ 1.0.0-beta.8**, which added arbitrary contract
-calls to `WalletAccountTron` ([issue #48](https://github.com/tetherto/wdk-wallet-tron/issues/48)).
-
 `WalletAccountTron` has no `approve()` method, so the TRC-20 allowance is granted through the
-same arbitrary-call path — `buildTronApproval()` returns a ready-made call descriptor.
+same arbitrary-call path ([issue #48](https://github.com/tetherto/wdk-wallet-tron/issues/48)) —
+`buildTronApproval()` returns a ready-made call descriptor.
 
 ```js
 // See examples/offramp-usdt-tron-to-btc.js
@@ -200,7 +198,8 @@ The Tron account's own provider is used to build the order's contract call and r
 allowance. Pass `config.tronWeb` (a tronweb instance) or `config.tronProvider` (a full-node
 URL) to override which node does that. Both only affect building the call and reading
 allowances — broadcasting always goes through the account, so it must be connected to a
-provider of its own regardless. Pass a real tronweb instance: the module relies on
+provider of its own regardless. Prefer a real tronweb instance for `config.tronWeb`: the
+module re-checks the built transaction itself before signing, and a real instance adds
 tronweb's own check that the node's response matches the call that was requested.
 
 ### Affiliate Fees

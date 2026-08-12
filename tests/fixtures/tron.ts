@@ -1,9 +1,5 @@
-// Builders for realistic tronweb responses.
-//
-// The adapter validates a built transaction before it reaches the signer, so a stub
-// object is no longer enough: `raw_data`, `raw_data_hex` and `txID` have to agree.
-// These helpers derive the latter two from the former with tronweb's own serializer,
-// which is exactly what the adapter re-checks.
+// The adapter's pre-signing check requires `raw_data`, `raw_data_hex` and `txID` to agree,
+// so these builders derive the latter two with tronweb's own serializer — no stub objects.
 import { utils } from 'tronweb'
 
 // Real mainnet addresses — `toHex` rejects made-up Base58, and the adapter converts.

@@ -262,8 +262,7 @@ describe('tronAdapter.send rejects a node response that is not the requested cal
   })
 
   test('a txID that is not the hash of the raw_data we can read', async () => {
-    // The readable raw_data is correct, but the signer commits to txID — which here
-    // stands for some other transaction entirely.
+    // The signer commits to txID, not to the readable raw_data.
     const tampered = { ...buildTronTx(), txID: 'a'.repeat(64) }
     await expect(
       tronAdapter.send(sender(), { tx: TX }, { tronWeb: hostileTronWeb(tampered) })
@@ -445,7 +444,7 @@ describe('tronAdapter.getRequiredApproval', () => {
     } as unknown as Partial<TronWebLike['transactionBuilder']>)
     await expect(
       tronAdapter.getRequiredApproval(account, USDT, SPENDER, 500n, { tronWeb })
-    ).rejects.toThrow(/allowance\(\) returned no result/)
+    ).rejects.toThrow(/returned 0 results .* expected 1/)
   })
 
   test('throws on revert data rather than reading it as a huge allowance', async () => {
@@ -528,9 +527,8 @@ describe('tronAdapter.simulate', () => {
   })
 
   test('an account without quoteSendTransaction still gets a validity verdict', async () => {
-    // Deliberate divergence from the EVM adapter, which throws NOT_SUPPORTED here: on
-    // Tron the build itself is the execution check, so `valid` is earned even with no
-    // quote method. The missing fee shows up as `feeEstimate: null`, not as a throw.
+    // Deliberate divergence from the EVM adapter (which throws NOT_SUPPORTED): on Tron the
+    // build itself is the execution check, so `valid` is earned without a quote method.
     const tronWeb = fakeTronWeb()
     const account = { getAddress: async () => OWNER }
     const out = await tronAdapter.simulate(account, { tx: TX }, { tronWeb })
