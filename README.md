@@ -55,12 +55,12 @@ const wdk = new WDK(seedPhrase)
     network: 'bitcoin',
     client: {
       type: 'electrum',
-      clientConfig: { host: 'electrum.blockstream.info', port: 50001 },
-    },
+      clientConfig: { host: 'electrum.blockstream.info', port: 50001 }
+    }
   })
   .registerWallet('ethereum', WalletManagerEvm, {
     chainId: 1,
-    provider: process.env.ETHEREUM_RPC_URL,
+    provider: process.env.ETHEREUM_RPC_URL
   })
   .registerProtocol('bitcoin', 'gateway', GatewaySwidge, { fromChain: 'bitcoin' })
 
@@ -72,7 +72,7 @@ const result = await sw.swidge({
   toToken: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2', // USDT on Base
   toChain: 'base',
   recipient: '0xYourEVMAddress',
-  fromTokenAmount: 100000n, // satoshis
+  fromTokenAmount: 100000n // satoshis
 })
 console.log('Order ID:', result.id, 'Tx hash:', result.hash)
 ```
@@ -84,7 +84,7 @@ import { GatewaySwidge, GatewayClient } from '@gobob/wdk-protocol-swidge-gateway
 
 const sw = new GatewaySwidge(account, {
   fromChain: 'base',
-  slippage: 0.01,
+  slippage: 0.01
 })
 ```
 
@@ -102,7 +102,7 @@ const result = await sw.swidge({
   toToken: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2', // USDT on Base
   toChain: 'base',
   recipient: '0xRecipient',
-  fromTokenAmount: 100000n, // satoshis
+  fromTokenAmount: 100000n // satoshis
 })
 ```
 
@@ -120,7 +120,7 @@ const options = {
   toToken: 'BTC',
   toChain: 'bitcoin',
   recipient: 'bc1qRecipientAddress',
-  fromTokenAmount: 1000000n, // USDT (6 decimals)
+  fromTokenAmount: 1000000n // USDT (6 decimals)
 }
 
 // Check and grant approval first
@@ -140,9 +140,9 @@ import { GatewaySwidge } from '@gobob/wdk-protocol-swidge-gateway'
 
 const sw = new GatewaySwidge(account, { fromChain: 'base' })
 const result = await sw.swap({
-  tokenIn: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
+  tokenIn: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',  // USDC on Base
   tokenOut: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2', // USDT on Base
-  tokenInAmount: 1000000n,
+  tokenInAmount: 1000000n
 })
 ```
 
@@ -158,7 +158,7 @@ const result = await sw.swidge({
   toToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', // USDT on Tron
   toChain: 'tron',
   recipient: 'TRecipientAddress',
-  fromTokenAmount: 100000n,
+  fromTokenAmount: 100000n
 })
 ```
 
@@ -210,14 +210,14 @@ import { GatewaySwidge } from '@gobob/wdk-protocol-swidge-gateway'
 
 const sw = new GatewaySwidge(account, {
   fromChain: 'bitcoin',
-  affiliates: [{ address: '0xPartnerAddress', bps: 30 }], // 0.3%
+  affiliates: [{ address: '0xPartnerAddress', bps: 30 }] // 0.3%
 })
 const result = await sw.swidge({
   fromToken: 'BTC',
   toToken: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
   toChain: 'base',
   recipient: '0xRecipient',
-  fromTokenAmount: 100000n,
+  fromTokenAmount: 100000n
 })
 ```
 
@@ -236,7 +236,7 @@ const quote = await sw.quoteSwidge({
   toToken: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
   toChain: 'base',
   recipient: '0xRecipient',
-  fromTokenAmount: 100000n,
+  fromTokenAmount: 100000n
 })
 console.log('Expected output:', quote.toTokenAmount)
 
@@ -250,13 +250,7 @@ console.log(status.status, status.transactions)
 ### Exports
 
 ```js
-import {
-  GatewaySwidge,
-  GatewayClient,
-  GatewaySwidgeError,
-  ERR,
-  BTC,
-} from '@gobob/wdk-protocol-swidge-gateway'
+import { GatewaySwidge, GatewayClient, GatewaySwidgeError, ERR, BTC } from '@gobob/wdk-protocol-swidge-gateway'
 // Default export:
 import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 ```
