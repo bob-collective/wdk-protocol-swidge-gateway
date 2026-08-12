@@ -10,8 +10,8 @@
  * Optional env:
  *   EVM_RPC_URL  — Ethereum JSON-RPC URL (default: https://ethereum-rpc.publicnode.com)
  *   TRON_RPC_URL — Tron full-node URL (default: https://tron.api.pocket.network)
- *   PHASE        — onramp | offramp | tron-offramp | status
- *   AMOUNT       — integer string: sats for onramp, USDT 6-decimal units for either offramp
+ *   PHASE        — onramp | tron-onramp | offramp | tron-offramp | status
+ *   AMOUNT       — integer string: sats for either onramp, USDT 6-decimal units for either offramp
  *   ORDER_ID     — gateway order ID (required for status phase)
  *
  * Run (after pnpm build):
@@ -31,7 +31,7 @@ const USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
 const USDT_TRON = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
 const USDT_BALANCE_ABI = ['function balanceOf(address owner) view returns (uint256)']
 
-const PHASES = ['onramp', 'offramp', 'tron-offramp', 'status'] as const
+const PHASES = ['onramp', 'tron-onramp', 'offramp', 'tron-offramp', 'status'] as const
 type Phase = (typeof PHASES)[number]
 
 const POLL_INTERVAL_MS = 10_000
@@ -168,6 +168,28 @@ switch (PHASE) {
         toToken: USDT,
         toChain: 'ethereum',
         recipient: evmAddress,
+        fromTokenAmount,
+        refundAddress: btcAddress,
+      })
+      logSwidgeResult('BTC_TXID', result)
+    })
+    break
+  }
+
+  // BTC → USDT@Tron. Broadcasts a real BTC transaction. Irreversible.
+  case 'tron-onramp': {
+    const fromTokenAmount = requireAmount('sats, integer')
+    console.log(
+      `PHASE=tron-onramp  fromTokenAmount=${AMOUNT} sats  recipient=${tronAddress}  refundAddress=${btcAddress}`
+    )
+
+    await runPhase('tron-onramp', async () => {
+      const sw = new GatewaySwidge(btcAccount, { fromChain: 'bitcoin' })
+      const result = await sw.swidge({
+        fromToken: 'BTC',
+        toToken: USDT_TRON,
+        toChain: 'tron',
+        recipient: tronAddress,
         fromTokenAmount,
         refundAddress: btcAddress,
       })

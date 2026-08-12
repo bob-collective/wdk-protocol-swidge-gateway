@@ -7,26 +7,27 @@ on:
   workflow_dispatch:
     inputs:
       phase:
-        description: "Swap phase to execute"
+        description: 'Swap phase to execute'
         required: true
         type: choice
         options:
           - onramp
+          - tron-onramp
           - offramp
           - tron-offramp
           - status
       amount:
-        description: "Amount to swap (sats for onramp; USDT 6-decimal units for offramp; leave blank for status)"
+        description: 'Amount to swap (sats for onramps; USDT 6-decimal units for offramps; leave blank for status)'
         required: false
-        default: ""
+        default: ''
       order_id:
-        description: "Gateway order ID (required for status phase)"
+        description: 'Gateway order ID (required for status phase)'
         required: false
-        default: ""
+        default: ''
       confirm:
-        description: "Safety guard — type exactly: yes-spend-real-funds"
+        description: 'Safety guard — type exactly: yes-spend-real-funds'
         required: true
-        default: ""
+        default: ''
 
 permissions: {}
 
