@@ -5,6 +5,9 @@ const ALLOWANCE_SELECTOR = 'allowance(address,address)'
 
 const DEFAULT_FEE_LIMIT_SUN = 100_000_000
 
+const BROADCAST_CONFIRM_TIMEOUT_MS = 20_000
+const BROADCAST_POLL_INTERVAL_MS = 1_500
+
 /** Native TRX: the EVM zero address, its Tron hex form (`0x41` + 20 zero bytes), and Base58Check. */
 const NATIVE_TOKENS = new Set([
   '0x0000000000000000000000000000000000000000',
@@ -57,6 +60,9 @@ export interface TronWebLike {
       issuerAddress: string
     ): Promise<TronNodeStatus & { constant_result?: string[] }>
   }
+  trx?: {
+    getTransaction(transactionID: string): Promise<unknown>
+  }
 }
 
 interface TronAccount {
@@ -70,6 +76,7 @@ interface TronAccount {
 export interface TronOpts {
   tronWeb?: TronWebLike
   tronProvider?: string
+  confirmTimeoutMs?: number
 }
 
 interface TronTx {
@@ -291,6 +298,50 @@ async function assertBuiltTxMatches(
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function resolveGetTransaction(tronWeb: TronWebLike): (txid: string) => Promise<unknown> {
+  const trx = tronWeb.trx
+  if (!trx || typeof trx.getTransaction !== 'function') {
+    throw new GatewaySwidgeError(
+      ERR.NOT_SUPPORTED,
+      'this tron provider exposes no trx.getTransaction, so a broadcast could not be ' +
+        'confirmed: pass a real tronweb instance as config.tronWeb, or a node URL as ' +
+        'config.tronProvider'
+    )
+  }
+  return (txid) => trx.getTransaction(txid)
+}
+
+async function assertBroadcast(
+  getTransaction: (txid: string) => Promise<unknown>,
+  txid: string,
+  timeoutMs: number
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  let lastError: unknown
+  for (;;) {
+    try {
+      await getTransaction(txid)
+      return
+    } catch (err) {
+      lastError = err
+    }
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
+    await sleep(Math.min(BROADCAST_POLL_INTERVAL_MS, remaining))
+  }
+  throw new GatewaySwidgeError(
+    ERR.HTTP,
+    `the tron node still does not know transaction ${txid} ${timeoutMs}ms after broadcasting ` +
+      'it, so the broadcast was rejected (an unactivated or unfunded sender is the usual ' +
+      'cause). Check that txid on chain before sending the same transfer again',
+    { cause: lastError }
+  )
+}
+
 export const tronAdapter = {
   family: 'tron' as const,
 
@@ -345,10 +396,27 @@ export const tronAdapter = {
       throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, 'tron account cannot send transactions')
     }
     const tronWeb = await resolveTronWeb(account, opts)
+    const getTransaction = resolveGetTransaction(tronWeb)
     const owner = await account.getAddress()
     const unsigned = await buildUnsignedTx(tronWeb, owner, payload.tx)
     const result = await account.sendTransaction(unsigned)
-    return { txid: result.hash }
+    const hash = result?.hash
+    if (typeof hash !== 'string' || hash === '') {
+      throw new GatewaySwidgeError(
+        ERR.HTTP,
+        'the tron account returned no transaction hash for the order call, so the node ' +
+          'rejected the broadcast (an unactivated or unfunded sender is the usual cause). ' +
+          `The transaction we built and signed is ${unsigned.txID} — check that on chain ` +
+          'before sending the same transfer again',
+        { cause: result }
+      )
+    }
+    await assertBroadcast(
+      getTransaction,
+      hash,
+      opts.confirmTimeoutMs ?? BROADCAST_CONFIRM_TIMEOUT_MS
+    )
+    return { txid: hash }
   },
 
   async simulate(

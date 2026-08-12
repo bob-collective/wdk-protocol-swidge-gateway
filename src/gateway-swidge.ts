@@ -55,6 +55,7 @@ export interface GatewaySwidgeConfig {
   ownerAddress?: string
   tronWeb?: TronOpts['tronWeb']
   tronProvider?: string
+  tronConfirmTimeoutMs?: number
   [key: string]: unknown
 }
 
@@ -93,7 +94,11 @@ export class GatewaySwidge extends SwidgeProtocol {
     this._feeRate = config.feeRate
     this._fromChain = config.fromChain
     this._ownerAddress = config.ownerAddress
-    this._tronOpts = { tronWeb: config.tronWeb, tronProvider: config.tronProvider }
+    this._tronOpts = {
+      tronWeb: config.tronWeb,
+      tronProvider: config.tronProvider,
+      confirmTimeoutMs: config.tronConfirmTimeoutMs,
+    }
     this._spenderCache = new Map()
   }
 

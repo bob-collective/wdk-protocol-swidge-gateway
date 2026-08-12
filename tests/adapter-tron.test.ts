@@ -20,14 +20,17 @@ function word(n: bigint): string {
 
 type FakeTronWeb = TronWebLike & {
   transactionBuilder: Record<string, ReturnType<typeof vi.fn>>
+  trx: { getTransaction: ReturnType<typeof vi.fn> }
 }
 
 /**
  * A node that honours the call it was asked to build. Responses are derived from the
  * arguments, so the adapter's pre-signing checks pass unless a test bends them.
+ * `trx.getTransaction` answers, i.e. the node accepted what was broadcast.
  */
 function fakeTronWeb(overrides: Partial<TronWebLike['transactionBuilder']> = {}): FakeTronWeb {
   return {
+    trx: { getTransaction: vi.fn(async (txid: string) => ({ txID: txid })) },
     transactionBuilder: {
       triggerSmartContract: vi.fn(
         async (
@@ -220,6 +223,64 @@ describe('tronAdapter.send', () => {
     await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).resolves.toEqual({
       txid: 't',
     })
+  })
+})
+
+describe('tronAdapter.send confirms the broadcast', () => {
+  test('reads the returned hash back from the node', async () => {
+    const tronWeb = fakeTronWeb()
+    await tronAdapter.send(
+      sender({ sendTransaction: async () => ({ hash: 'txid1' }) }),
+      {
+        tx: TX,
+      },
+      { tronWeb }
+    )
+    expect(tronWeb.trx.getTransaction).toHaveBeenCalledWith('txid1')
+  })
+
+  test('throws when the node never learns the transaction', async () => {
+    const tronWeb = fakeTronWeb()
+    tronWeb.trx.getTransaction = vi.fn(async () => {
+      throw new Error('Transaction not found')
+    })
+    await expect(
+      tronAdapter.send(sender(), { tx: TX }, { tronWeb, confirmTimeoutMs: 0 })
+    ).rejects.toThrow(/still does not know transaction t 0ms after broadcasting it/)
+  })
+
+  test('keeps polling until the node answers', async () => {
+    const tronWeb = fakeTronWeb()
+    let calls = 0
+    tronWeb.trx.getTransaction = vi.fn(async (txid: string) => {
+      if (++calls < 3) throw new Error('Transaction not found')
+      return { txID: txid }
+    })
+    await expect(
+      tronAdapter.send(sender(), { tx: TX }, { tronWeb, confirmTimeoutMs: 5_000 })
+    ).resolves.toEqual({ txid: 't' })
+    expect(calls).toBe(3)
+  })
+
+  test('fails immediately when the account comes back without a hash', async () => {
+    const tronWeb = fakeTronWeb()
+    const account = sender({
+      sendTransaction: vi.fn(async () => ({}) as unknown as { hash: string }),
+    })
+    await expect(tronAdapter.send(account, { tx: TX }, { tronWeb })).rejects.toThrow(
+      /returned no transaction hash for the order call/
+    )
+    expect(tronWeb.trx.getTransaction).not.toHaveBeenCalled()
+  })
+
+  test('refuses to sign at all when the provider cannot confirm a broadcast', async () => {
+    const tronWeb = fakeTronWeb()
+    delete (tronWeb as { trx?: unknown }).trx
+    const account = sender()
+    await expect(tronAdapter.send(account, { tx: TX }, { tronWeb })).rejects.toThrow(
+      /exposes no trx.getTransaction/
+    )
+    expect(account.sendTransaction).not.toHaveBeenCalled()
   })
 })
 

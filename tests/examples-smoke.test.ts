@@ -119,6 +119,7 @@ function makeTronAccount() {
           constant_result: [(approved ? 10n ** 30n : 0n).toString(16).padStart(64, '0')],
         })),
       },
+      trx: { getTransaction: vi.fn(async (txid: string) => ({ txID: txid })) },
     },
   }
 }

@@ -202,6 +202,12 @@ provider of its own regardless. Prefer a real tronweb instance for `config.tronW
 module re-checks the built transaction itself before signing, and a real instance adds
 tronweb's own check that the node's response matches the call that was requested.
 
+The node is also read back after broadcasting, through `trx.getTransaction`. A Tron node
+echoes the transaction's locally computed txID in its **rejection** body as well, and
+`WalletAccountTron.sendTransaction` returns that hash without reading the status — so a
+hash on its own does not mean anything was accepted. A provider that cannot answer
+`trx.getTransaction` is refused before anything is signed.
+
 ### Affiliate Fees
 
 ```js
@@ -271,6 +277,7 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 | `config.ownerAddress`   | `string?`                                | EVM address recorded as the order's owner. Overrides the derived default (see below).                                                      |
 | `config.tronWeb`        | `object?`                                | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. Defaults to the account's own provider. |
 | `config.tronProvider`   | `string?`                                | Tron source routes only. Full-node URL to build a tronweb client from.                                                                     |
+| `config.tronConfirmTimeoutMs` | `number?`                          | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node (default `20000` ms).                        |
 
 The gateway requires an `ownerAddress` on every route and validates it as an **Ethereum** address, so the module derives one: the `recipient` on an onramp (the source side is a bare BTC payment), the account's own address everywhere else. A Tron owner therefore goes on the wire in its `0x`-hex form — the same 20 bytes its Base58Check spelling encodes — while `sender`/`recipient` on the same request keep their native encoding. Set `config.ownerAddress` when the order should be owned by some other EVM account.
 
@@ -283,8 +290,16 @@ The gateway requires an `ownerAddress` on every route and validates it as an **E
 | `toChain`         | `string`  | Yes      | Destination chain id (e.g. `'base'`, `'bitcoin'`, `'tron'`).                                                                                                                                           |
 | `recipient`       | `string`  | Yes      | Recipient address on the destination chain.                                                                                                                                                            |
 | `fromTokenAmount` | `bigint`  | Yes      | Amount to send (in the token's smallest unit).                                                                                                                                                         |
-| `refundAddress`   | `string?` | No       | Address to receive a refund on the source chain if the order fails.                                                                                                                                    |
+| `refundAddress`   | `string?` | No       | Bitcoin refund address for an onramp. Forwarded to get-quote, which currently ignores it — see below.                                                                                                   |
 | `slippage`        | `number?` | No       | Per-call slippage override (overrides `config.slippage`).                                                                                                                                              |
+
+`refundAddress` does **not** choose where a failed order is refunded, on any route. The V3 API takes
+it as "optional refund bitcoin address to be used in a bitcoin onramp request" and does not yet read
+it, and no quote field carries it — so `swidge()`, which posts the quote back verbatim to
+create-order, cannot forward it either. The refund targets the gateway does honour are derived
+server-side: the order owner (`config.ownerAddress`, which the API documents as the "EVM owner /
+refund address") on an onramp, and the source-chain sender on an offramp or token swap. See
+[`docs/api-reference.md`](docs/api-reference.md) for the details.
 
 ### Methods
 
@@ -345,7 +360,7 @@ On Tron the allowance is read with a constant-contract call through the resolved
 
 - **Approval pre-flight (`getRequiredApproval`) is a simple allowance check:** It returns an approval whenever `allowance < amount`. Some OFT-style receiver contracts do not require an ERC-20 approval at all; for those, approving anyway is harmless (the gateway contract ignores the allowance). The `@gobob/bob-sdk` additionally probes the receiver's `approvalRequired()` method; this module does not — it relies on the gateway to route the transaction correctly.
 
-- **Offramp tx is registered on broadcast, not after mining:** WDK's `sendTransaction` returns once the tx is broadcast; the module registers the resulting `srcTxHash` immediately. The gateway watches the chain for the registered hash, so no confirmation wait is required — this is expected behaviour, not a race condition.
+- **Offramp tx is registered on broadcast, not after mining:** WDK's `sendTransaction` returns once the tx is broadcast; the module registers the resulting `srcTxHash` immediately. The gateway watches the chain for the registered hash, so no confirmation wait is required — this is expected behaviour, not a race condition. On a Tron source route the hash is first read back from the node (see above), because a Tron txid exists before the transaction does; that read-back waits for acceptance, never for mining.
 
 - **Gas:** The module relies on the WDK account's built-in gas estimation with no extra buffer. If an offramp contract call ever reverts out-of-gas, pass a gas override via the account's send options or raise an issue.
 

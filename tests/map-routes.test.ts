@@ -20,6 +20,12 @@ const ROUTES = [
     srcToken: '0xusdt000000000000000000000000000000000001',
     dstToken: 'So11111111111111111111111111111111111111112',
   },
+  {
+    srcChain: 'tron',
+    dstChain: 'bitcoin',
+    srcToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+    dstToken: '0x0000000000000000000000000000000000000000',
+  },
 ]
 
 describe('toSupportedChains', () => {
@@ -54,6 +60,18 @@ describe('toSupportedChains', () => {
     const chains = toSupportedChains(ROUTES)
     const base = chains.find((c) => c.id === 'base')!
     expect(base.nativeToken).toBe('ETH')
+  })
+
+  test('tron chain has nativeToken TRX', () => {
+    const chains = toSupportedChains(ROUTES)
+    const tron = chains.find((c) => c.id === 'tron')!
+    expect(tron.nativeToken).toBe('TRX')
+  })
+
+  test('solana chain has nativeToken SOL', () => {
+    const chains = toSupportedChains(ROUTES)
+    const solana = chains.find((c) => c.id === 'solana')!
+    expect(solana.nativeToken).toBe('SOL')
   })
 })
 
