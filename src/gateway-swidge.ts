@@ -14,18 +14,33 @@ import type { GatewayClientConfig } from './gateway-client.js'
 import { getAdapter } from './chain-adapters/registry.js'
 import { evmAdapter } from './chain-adapters/evm.js'
 import { bitcoinAdapter } from './chain-adapters/bitcoin.js'
+import { tronAdapter } from './chain-adapters/tron.js'
+import type { TronOpts } from './chain-adapters/tron.js'
 import { chainFamily, detectVariant } from './chains.js'
+import { toEvmAddress } from './address.js'
 import { toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
 import { toSwidgeQuote } from './map/quote.js'
 import { toSwidgeStatus } from './map/status.js'
 import { toSupportedChains, toSupportedTokens } from './map/routes.js'
 import { orderPayload } from './map/order.js'
-import type { BtcOrderPayload, EvmOrderPayload } from './map/order.js'
+import type { OrderPayload } from './map/order.js'
 import type { SwidgeSimulation } from './types.js'
+import { GatewaySwidgeError, ERR } from './errors.js'
 
 const DEFAULT_SLIPPAGE = 0.03
 const BOB_BEARER_TOKEN = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
+
+function assertPayloadFamily(payload: OrderPayload, srcFamily: string): void {
+  const family = payload.kind === 'btc' ? 'bitcoin' : payload.kind
+  if (family !== srcFamily) {
+    throw new GatewaySwidgeError(
+      ERR.VALIDATION,
+      `create-order returned a ${payload.kind} transaction for a ${srcFamily} route`,
+      { cause: payload }
+    )
+  }
+}
 
 export interface GatewaySwidgeConfig {
   apiUrl?: string
@@ -37,6 +52,9 @@ export interface GatewaySwidgeConfig {
   slippage?: number
   feeRate?: number
   fromChain?: string
+  ownerAddress?: string
+  tronWeb?: TronOpts['tronWeb']
+  tronProvider?: string
   [key: string]: unknown
 }
 
@@ -53,6 +71,8 @@ export class GatewaySwidge extends SwidgeProtocol {
   private _slippage: number
   private _feeRate: number | undefined
   private _fromChain: string | undefined
+  private _ownerAddress: string | undefined
+  private _tronOpts: TronOpts
   private _spenderCache: Map<string, string>
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,6 +92,8 @@ export class GatewaySwidge extends SwidgeProtocol {
     this._slippage = config.slippage ?? DEFAULT_SLIPPAGE
     this._feeRate = config.feeRate
     this._fromChain = config.fromChain
+    this._ownerAddress = config.ownerAddress
+    this._tronOpts = { tronWeb: config.tronWeb, tronProvider: config.tronProvider }
     this._spenderCache = new Map()
   }
 
@@ -111,7 +133,8 @@ export class GatewaySwidge extends SwidgeProtocol {
       this._account && typeof this._account.getAddress === 'function'
         ? await this._account.getAddress()
         : undefined
-    const ownerAddress = variant === 'onramp' ? options.recipient : fromAddress
+    const owner = this._ownerAddress ?? (variant === 'onramp' ? options.recipient : fromAddress)
+    const ownerAddress = owner === undefined ? undefined : toEvmAddress(owner)
     const params = toQuoteParams(
       {
         ...options,
@@ -136,38 +159,44 @@ export class GatewaySwidge extends SwidgeProtocol {
     const gw = await this._client.getQuote(params)
     // priceImpact: wire is string, WDK type is number — cast at boundary.
     // fees: WDK SwidgeFee requires `token`; our local fees omit it — cast at boundary.
-    return toSwidgeQuote(gw as Record<string, unknown>, { affiliateApplied }) as unknown as SwidgeQuote
+    return toSwidgeQuote(gw as Record<string, unknown>, {
+      affiliateApplied,
+    }) as unknown as SwidgeQuote
   }
 
-  async swidge(options: SwidgeOptions, config: Record<string, unknown> = {}): Promise<SwidgeResult> {
+  async swidge(
+    options: SwidgeOptions,
+    config: Record<string, unknown> = {}
+  ): Promise<SwidgeResult> {
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
-    const quote = await this._client.getQuote(params)
-    const order = await this._client.createOrder({ [variant]: (quote as Record<string, unknown>)[variant] })
-    const payload = orderPayload(
-      order as Record<string, unknown>,
-      variant,
-      quote as Record<string, unknown>
-    )
+    const { quote, payload } = await this._createOrder(params, variant, srcFamily)
     const adapter = getAdapter(srcFamily)
 
     let txid: string
     if (payload.kind === 'btc') {
-      const btcPayload = payload as BtcOrderPayload
-      const { txid: id, hex } = await (
-        adapter as typeof import('./chain-adapters/bitcoin.js').bitcoinAdapter
-      ).send(this._account, { ...btcPayload }, { feeRate: this._feeRate })
+      const { txid: id, hex } = await (adapter as typeof bitcoinAdapter).send(
+        this._account,
+        { ...payload },
+        { feeRate: this._feeRate }
+      )
       await this._registerBestEffort({ onramp: { order_id: payload.orderId, bitcoin_tx_hex: hex } })
       txid = id
     } else {
-      const evmPayload = payload as EvmOrderPayload
-      const sent = await (adapter as typeof evmAdapter).send(
-        this._account,
-        { ...evmPayload },
-        { aaConfig: this._aaConfig(config) }
-      )
-      const quoteVariant = (quote as Record<string, unknown>)[variant] as
-        | Record<string, unknown>
-        | undefined
+      const sent =
+        payload.kind === 'tron'
+          ? await (adapter as typeof tronAdapter).send(
+              this._account,
+              { ...payload },
+              this._tronOpts
+            )
+          : await (adapter as typeof evmAdapter).send(
+              this._account,
+              { ...payload },
+              {
+                aaConfig: this._aaConfig(config),
+              }
+            )
+      const quoteVariant = quote[variant] as Record<string, unknown> | undefined
       await this._registerBestEffort({
         [variant]: {
           order_id: payload.orderId,
@@ -178,9 +207,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       txid = sent.txid
     }
 
-    const sq = toSwidgeQuote(quote as Record<string, unknown>, {
-      affiliateApplied: params.affiliates !== undefined,
-    })
+    const sq = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
     return {
       id: payload.orderId,
       hash: txid,
@@ -189,6 +216,22 @@ export class GatewaySwidge extends SwidgeProtocol {
       fromTokenAmount: sq.fromTokenAmount,
       toTokenAmount: sq.toTokenAmount,
     }
+  }
+
+  /** Quote → create-order → payload, with the payload's family checked against the route's. */
+  private async _createOrder(
+    params: Record<string, string | undefined>,
+    variant: 'onramp' | 'offramp' | 'tokenSwap',
+    srcFamily: string
+  ): Promise<{ quote: Record<string, unknown>; payload: OrderPayload }> {
+    const quote = (await this._client.getQuote(params)) as Record<string, unknown>
+    const order = (await this._client.createOrder({ [variant]: quote[variant] })) as Record<
+      string,
+      unknown
+    >
+    const payload = orderPayload(order, variant, quote)
+    assertPayloadFamily(payload, srcFamily)
+    return { quote, payload }
   }
 
   private _aaConfig(config: Record<string, unknown>): unknown {
@@ -220,48 +263,48 @@ export class GatewaySwidge extends SwidgeProtocol {
    */
   async simulateSwidge(options: SwidgeOptions & { fromChain?: string }): Promise<SwidgeSimulation> {
     const { params, variant, srcFamily } = await this._buildQuoteParams(options)
-    const quote = await this._client.getQuote(params)
-    const order = await this._client.createOrder({ [variant]: (quote as Record<string, unknown>)[variant] })
-    const payload = orderPayload(
-      order as Record<string, unknown>,
-      variant,
-      quote as Record<string, unknown>
-    )
+    const { quote, payload } = await this._createOrder(params, variant, srcFamily)
     const adapter = getAdapter(srcFamily)
-    const sq = toSwidgeQuote(quote as Record<string, unknown>, { affiliateApplied: params.affiliates !== undefined })
+    const sq = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
+    const common = {
+      variant,
+      orderId: payload.orderId,
+      quote: sq as unknown as Record<string, unknown>,
+      broadcast: false as const,
+    }
 
     if (payload.kind === 'btc') {
-      const btcPayload = payload as BtcOrderPayload
-      const simResult = await (adapter as typeof bitcoinAdapter).simulate(
-        this._account,
-        { ...btcPayload },
-        { feeRate: this._feeRate }
-      )
       return {
-        variant,
-        orderId: payload.orderId,
-        quote: sq as unknown as Record<string, unknown>,
-        broadcast: false,
-        onramp: simResult,
+        ...common,
+        onramp: await (adapter as typeof bitcoinAdapter).simulate(
+          this._account,
+          { ...payload },
+          { feeRate: this._feeRate }
+        ),
       }
-    } else {
-      const evmPayload = payload as EvmOrderPayload
-      const simResult = await (adapter as typeof evmAdapter).simulate(
-        this._account,
-        { ...evmPayload },
-        {
-          token: (options as { fromToken?: string }).fromToken,
-          spender: evmPayload.tx.to,
-          amount: options.fromTokenAmount,
-        }
-      )
+    }
+    const approvalOpts = {
+      token: (options as { fromToken?: string }).fromToken,
+      spender: payload.tx.to,
+      amount: options.fromTokenAmount,
+    }
+    if (payload.kind === 'tron') {
       return {
-        variant,
-        orderId: payload.orderId,
-        quote: sq as unknown as Record<string, unknown>,
-        broadcast: false,
-        evm: simResult,
+        ...common,
+        tron: await (adapter as typeof tronAdapter).simulate(
+          this._account,
+          { ...payload },
+          { ...this._tronOpts, ...approvalOpts }
+        ),
       }
+    }
+    return {
+      ...common,
+      evm: await (adapter as typeof evmAdapter).simulate(
+        this._account,
+        { ...payload },
+        approvalOpts
+      ),
     }
   }
 
@@ -276,8 +319,12 @@ export class GatewaySwidge extends SwidgeProtocol {
     )
   }
 
-  async getSupportedTokens(options?: SwidgeSupportedTokensOptions): Promise<SwidgeSupportedToken[]> {
-    const opts = options ? { fromChain: options.fromChain != null ? String(options.fromChain) : undefined } : {}
+  async getSupportedTokens(
+    options?: SwidgeSupportedTokensOptions
+  ): Promise<SwidgeSupportedToken[]> {
+    const opts = options
+      ? { fromChain: options.fromChain != null ? String(options.fromChain) : undefined }
+      : {}
     return toSupportedTokens(
       (await this._client.getRoutes()) as Parameters<typeof toSupportedTokens>[0],
       opts
@@ -293,27 +340,33 @@ export class GatewaySwidge extends SwidgeProtocol {
    * instance, so call it once per route, not before every swap.
    */
   async getRequiredApproval(
-    options: SwidgeOptions & { fromToken: string; toToken: string; fromTokenAmount: bigint | string | number }
+    options: SwidgeOptions & {
+      fromToken: string
+      toToken: string
+      fromTokenAmount: bigint | string | number
+    }
   ): Promise<{ token: string; spender: string; amount: bigint } | null> {
-    const { params, variant } = await this._buildQuoteParams(options)
+    const { params, variant, srcFamily } = await this._buildQuoteParams(options)
     if (variant === 'onramp') return null
     const key = `${variant}:${options.fromToken}:${options.toToken}:${(options.toChain as string) || ''}`
     let spender: string
     if (this._spenderCache.has(key)) {
       spender = this._spenderCache.get(key)!
     } else {
-      const quote = await this._client.getQuote(params)
-      const order = await this._client.createOrder({
-        [variant]: (quote as Record<string, unknown>)[variant],
-      })
-      const payload = orderPayload(
-        order as Record<string, unknown>,
-        variant,
-        quote as Record<string, unknown>
-      )
-      if (payload.kind !== 'evm') throw new Error('expected evm payload for approval check')
+      const { payload } = await this._createOrder(params, variant, srcFamily)
+      if (payload.kind === 'btc')
+        throw new Error('expected a contract-call payload for approval check')
       spender = payload.tx.to
       this._spenderCache.set(key, spender)
+    }
+    if (srcFamily === 'tron') {
+      return tronAdapter.getRequiredApproval(
+        this._account,
+        options.fromToken,
+        spender,
+        options.fromTokenAmount,
+        this._tronOpts
+      )
     }
     return evmAdapter.getRequiredApproval(
       this._account,

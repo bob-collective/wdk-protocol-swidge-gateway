@@ -86,8 +86,9 @@ export const evmAdapter = {
    * Dry-run the EVM transaction via `quoteSendTransaction` (estimates gas / reverts if invalid)
    * without broadcasting. Also computes required token approval if token/amount are supplied.
    *
-   * Never throws on a simulation revert — returns `valid: false` with `reason` instead.
-   * Throws `NOT_SUPPORTED` only when the account lacks `quoteSendTransaction` entirely.
+   * Never throws on a simulation revert, nor on a failed allowance read — both come back as
+   * `valid: false` with `reason`. Throws `NOT_SUPPORTED` only when the account lacks
+   * `quoteSendTransaction` entirely.
    */
   async simulate(
     account: EvmAccount,
@@ -95,15 +96,18 @@ export const evmAdapter = {
     opts: { token?: string; spender?: string; amount?: bigint | string | number } = {}
   ): Promise<EvmSimulateResult> {
     if (typeof account.quoteSendTransaction !== 'function') {
-      throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, 'evm account does not support quoteSendTransaction')
+      throw new GatewaySwidgeError(
+        ERR.NOT_SUPPORTED,
+        'evm account does not support quoteSendTransaction'
+      )
     }
     const spender = opts.spender ?? payload.tx.to
-    const requiredApproval =
-      opts.token != null && opts.amount != null
-        ? await this.getRequiredApproval(account, opts.token, spender, opts.amount)
-        : null
+    let requiredApproval: { token: string; spender: string; amount: bigint } | null = null
 
     try {
+      if (opts.token != null && opts.amount != null) {
+        requiredApproval = await this.getRequiredApproval(account, opts.token, spender, opts.amount)
+      }
       const result = await account.quoteSendTransaction(payload.tx)
       const gasEstimate = result.fee ?? result.gas ?? null
       return { tx: payload.tx, gasEstimate, requiredApproval, valid: true }

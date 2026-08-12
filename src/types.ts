@@ -3,8 +3,9 @@
 
 import type { BtcSimulateResult } from './chain-adapters/bitcoin.js'
 import type { EvmSimulateResult } from './chain-adapters/evm.js'
+import type { TronSimulateResult } from './chain-adapters/tron.js'
 
-export type { BtcSimulateResult, EvmSimulateResult }
+export type { BtcSimulateResult, EvmSimulateResult, TronSimulateResult }
 
 /**
  * Result of `GatewaySwidge.simulateSwidge()`.
@@ -12,23 +13,13 @@ export type { BtcSimulateResult, EvmSimulateResult }
  * `broadcast` is always `false` — no transaction was sent, no registerTx called.
  * An orphaned Gateway order is created as a side-effect (the gateway reconciles these).
  */
-export type SwidgeSimulation =
-  | {
-      variant: 'onramp' | 'offramp' | 'tokenSwap'
-      orderId: string
-      /** Mapped quote (same shape as `quoteSwidge` output). */
-      quote: Record<string, unknown>
-      broadcast: false
-      onramp: BtcSimulateResult
-    }
-  | {
-      variant: 'onramp' | 'offramp' | 'tokenSwap'
-      orderId: string
-      /** Mapped quote (same shape as `quoteSwidge` output). */
-      quote: Record<string, unknown>
-      broadcast: false
-      evm: EvmSimulateResult
-    }
+export type SwidgeSimulation = {
+  variant: 'onramp' | 'offramp' | 'tokenSwap'
+  orderId: string
+  /** Mapped quote (same shape as `quoteSwidge` output). */
+  quote: Record<string, unknown>
+  broadcast: false
+} & ({ onramp: BtcSimulateResult } | { evm: EvmSimulateResult } | { tron: TronSimulateResult })
 
 export interface GetQuoteParamsV3 {
   srcChain: string

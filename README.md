@@ -9,7 +9,7 @@ The Wallet Development Kit (WDK) is a modular framework for building non-custodi
 ## 🌟 Features
 
 - **Native BTC ↔ EVM**: Bidirectional swidge — swap BTC ⇄ **USDT, USDC, ETH, wBTC, cbBTC, XAUT** across **Ethereum, Base, Arbitrum, BSC** and more.
-- **BTC → Tron**: Send BTC and receive USDT (or other tokens) on Tron (destination only in v1; see [Tron-as-source tracking issue](https://github.com/tetherto/wdk-wallet-tron/issues/48)).
+- **Native BTC ↔ Tron**: Bidirectional — send BTC and receive USDT on Tron, or spend TRC-20 USDT and receive native BTC.
 - **EVM ↔ EVM**: Same-chain swaps and cross-chain bridges via the inherited `swap()` / `bridge()` methods.
 - **Affiliate fees**: Earn revenue on BTC ↔ EVM routes with configurable per-address basis-point fees.
 - **Zero-config attribution**: The default `bearerToken` attributes gateway-wdk volume to BOB at 0 fee.
@@ -29,6 +29,13 @@ Then install WDK core plus the wallet modules for the chains you support:
 
 ```bash
 pnpm add @tetherto/wdk @tetherto/wdk-wallet-btc @tetherto/wdk-wallet-evm
+```
+
+Tron source routes additionally need `@tetherto/wdk-wallet-tron` **≥ 1.0.0-beta.8** — earlier
+versions cannot sign the arbitrary contract call an offramp requires:
+
+```bash
+pnpm add @tetherto/wdk-wallet-tron
 ```
 
 ## 🚀 Quick Start
@@ -139,11 +146,10 @@ const result = await sw.swap({
 })
 ```
 
-### BTC → USDT on Tron (destination-only)
+### BTC → USDT on Tron
 
 ```js
 // See examples/onramp-btc-to-usdt-tron.js
-// Tron as SOURCE is not supported in v1 — track https://github.com/tetherto/wdk-wallet-tron/issues/48
 import { GatewaySwidge } from '@gobob/wdk-protocol-swidge-gateway'
 
 const sw = new GatewaySwidge(account, { fromChain: 'bitcoin' })
@@ -155,6 +161,46 @@ const result = await sw.swidge({
   fromTokenAmount: 100000n
 })
 ```
+
+### USDT on Tron → BTC
+
+`WalletAccountTron` has no `approve()` method, so the TRC-20 allowance is granted through the
+same arbitrary-call path ([issue #48](https://github.com/tetherto/wdk-wallet-tron/issues/48)) —
+`buildTronApproval()` returns a ready-made call descriptor.
+
+```js
+// See examples/offramp-usdt-tron-to-btc.js
+import { GatewaySwidge, buildTronApproval } from '@gobob/wdk-protocol-swidge-gateway'
+
+const sw = new GatewaySwidge(account, { fromChain: 'tron' })
+const route = {
+  fromToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', // USDT on Tron
+  toToken: 'BTC',
+  toChain: 'bitcoin',
+  recipient: 'bc1qRecipientAddress',
+  fromTokenAmount: 1000000n,
+}
+
+const approval = await sw.getRequiredApproval(route)
+if (approval) {
+  await account.sendTransaction(buildTronApproval(approval))
+  while ((await sw.getRequiredApproval(route)) !== null) {
+    await new Promise((resolve) => setTimeout(resolve, 3_000))
+  }
+}
+
+const result = await sw.swidge(route)
+```
+
+See `examples/offramp-usdt-tron-to-btc.ts` for the same flow with a bounded retry count.
+
+The Tron account's own provider is used to build the order's contract call and read the
+allowance. Pass `config.tronWeb` (a tronweb instance) or `config.tronProvider` (a full-node
+URL) to override which node does that. Both only affect building the call and reading
+allowances — broadcasting always goes through the account, so it must be connected to a
+provider of its own regardless. Prefer a real tronweb instance for `config.tronWeb`: the
+module re-checks the built transaction itself before signing, and a real instance adds
+tronweb's own check that the node's response matches the call that was requested.
 
 ### Affiliate Fees
 
@@ -211,29 +257,34 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 
 ### `new GatewaySwidge(account, config?)`
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `account` | `object` | WDK wallet account (BTC or EVM). |
-| `config.apiUrl` | `string?` | Gateway API base URL. |
-| `config.bearerToken` | `string?` | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee, attributes volume to BOB). |
-| `config.http` | `object?` | Injectable HTTP transport (useful for testing). |
-| `config.affiliates` | `Array<{address: string, bps: number}>?` | Affiliate fee entries. |
-| `config.paymasterToken` | `string?` | ERC-20 paymaster token for AA accounts. |
-| `config.slippage` | `number?` | Default slippage fraction (default `0.03` = 3%). |
-| `config.feeRate` | `number?` | BTC fee rate in sat/vByte. |
-| `config.fromChain` | `string?` | Source chain id. Required when not passed in `SwidgeOptions`. |
+| Parameter               | Type                                     | Description                                                                                                                                |
+| ----------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `account`               | `object`                                 | WDK wallet account (BTC, EVM or Tron).                                                                                                     |
+| `config.apiUrl`         | `string?`                                | Gateway API base URL.                                                                                                                      |
+| `config.bearerToken`    | `string?`                                | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee, attributes volume to BOB).                                         |
+| `config.http`           | `object?`                                | Injectable HTTP transport (useful for testing).                                                                                            |
+| `config.affiliates`     | `Array<{address: string, bps: number}>?` | Affiliate fee entries.                                                                                                                     |
+| `config.paymasterToken` | `string?`                                | ERC-20 paymaster token for AA accounts.                                                                                                    |
+| `config.slippage`       | `number?`                                | Default slippage fraction (default `0.03` = 3%).                                                                                           |
+| `config.feeRate`        | `number?`                                | BTC fee rate in sat/vByte.                                                                                                                 |
+| `config.fromChain`      | `string?`                                | Source chain id. Required when not passed in `SwidgeOptions`.                                                                              |
+| `config.ownerAddress`   | `string?`                                | EVM address recorded as the order's owner. Overrides the derived default (see below).                                                      |
+| `config.tronWeb`        | `object?`                                | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. Defaults to the account's own provider. |
+| `config.tronProvider`   | `string?`                                | Tron source routes only. Full-node URL to build a tronweb client from.                                                                     |
+
+The gateway requires an `ownerAddress` on every route and validates it as an **Ethereum** address, so the module derives one: the `recipient` on an onramp (the source side is a bare BTC payment), the account's own address everywhere else. A Tron owner therefore goes on the wire in its `0x`-hex form — the same 20 bytes its Base58Check spelling encodes — while `sender`/`recipient` on the same request keep their native encoding. Set `config.ownerAddress` when the order should be owned by some other EVM account.
 
 ### `SwidgeOptions`
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `fromToken` | `string` | Yes | Source token: pass `'BTC'` (or the exported `BTC` constant) for Bitcoin — normalised internally to the gateway's native-token zero-address. ERC-20/TRC-20 tokens are passed as their contract address. |
-| `toToken` | `string` | Yes | Destination token: pass `'BTC'` (or `BTC` constant) for Bitcoin, or a contract address for ERC-20/TRC-20 tokens. |
-| `toChain` | `string` | Yes | Destination chain id (e.g. `'base'`, `'bitcoin'`, `'tron'`). |
-| `recipient` | `string` | Yes | Recipient address on the destination chain. |
-| `fromTokenAmount` | `bigint` | Yes | Amount to send (in the token's smallest unit). |
-| `refundAddress` | `string?` | No | Address to receive a refund on the source chain if the order fails. |
-| `slippage` | `number?` | No | Per-call slippage override (overrides `config.slippage`). |
+| Field             | Type      | Required | Description                                                                                                                                                                                            |
+| ----------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `fromToken`       | `string`  | Yes      | Source token: pass `'BTC'` (or the exported `BTC` constant) for Bitcoin — normalised internally to the gateway's native-token zero-address. ERC-20/TRC-20 tokens are passed as their contract address. |
+| `toToken`         | `string`  | Yes      | Destination token: pass `'BTC'` (or `BTC` constant) for Bitcoin, or a contract address for ERC-20/TRC-20 tokens.                                                                                       |
+| `toChain`         | `string`  | Yes      | Destination chain id (e.g. `'base'`, `'bitcoin'`, `'tron'`).                                                                                                                                           |
+| `recipient`       | `string`  | Yes      | Recipient address on the destination chain.                                                                                                                                                            |
+| `fromTokenAmount` | `bigint`  | Yes      | Amount to send (in the token's smallest unit).                                                                                                                                                         |
+| `refundAddress`   | `string?` | No       | Address to receive a refund on the source chain if the order fails.                                                                                                                                    |
+| `slippage`        | `number?` | No       | Per-call slippage override (overrides `config.slippage`).                                                                                                                                              |
 
 ### Methods
 
@@ -245,13 +296,13 @@ Returns a quote without executing a transaction. Useful for displaying expected 
 
 Executes a swidge. Returns:
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | `string` | Gateway order ID — pass to `getSwidgeStatus()`. |
-| `hash` | `string` | Source-chain transaction hash or TXID. |
-| `fees` | `object` | Fee breakdown from the quote. |
-| `fromTokenAmount` | `bigint` | Actual input amount. |
-| `toTokenAmount` | `bigint` | Expected output amount. |
+| Field             | Type     | Description                                     |
+| ----------------- | -------- | ----------------------------------------------- |
+| `id`              | `string` | Gateway order ID — pass to `getSwidgeStatus()`. |
+| `hash`            | `string` | Source-chain transaction hash or TXID.          |
+| `fees`            | `object` | Fee breakdown from the quote.                   |
+| `fromTokenAmount` | `bigint` | Actual input amount.                            |
+| `toTokenAmount`   | `bigint` | Expected output amount.                         |
 
 For offramp and token-swap routes, call `getRequiredApproval()` and `approve()` on the account before calling `swidge()`.
 
@@ -269,7 +320,9 @@ Returns supported tokens, optionally filtered by `options`.
 
 #### `getRequiredApproval(options) → Promise<{ token: string, spender: string, amount: bigint } | null>`
 
-Returns the ERC-20 approval the caller must grant before executing an offramp or token-swap swidge. Returns `null` for onramp routes (native asset, no approval needed).
+Returns the ERC-20/TRC-20 approval the caller must grant before executing an offramp or token-swap swidge. Returns `null` for onramp routes (native asset, no approval needed).
+
+On Tron the allowance is read with a constant-contract call through the resolved provider, since `WalletAccountTron` exposes no allowance getter. Feed the result to `buildTronApproval()` to get a call descriptor `WalletAccountTron.sendTransaction` accepts.
 
 **Important:** On a cache miss, this method creates a Gateway order internally to discover the spender contract address (the V3 API has no read-only spender lookup endpoint). Results are cached per route on the `GatewaySwidge` instance, so callers should not invoke `getRequiredApproval` before every swap — call it once per route and reuse the result.
 
@@ -279,12 +332,12 @@ Returns the ERC-20 approval the caller must grant before executing an offramp or
 
 ## 🌐 Supported Networks & Routes
 
-| Route | Direction | Notes |
-|-------|-----------|-------|
-| BTC ↔ EVM chains | Bidirectional | Supports affiliate fees |
-| BTC → Tron | Destination only | Tron-as-source not in v1 ([tracking issue](https://github.com/tetherto/wdk-wallet-tron/issues/48)) |
-| EVM ↔ EVM | Bidirectional | Use `swap()` / `bridge()` (inherited). Affiliate fees not supported on this route. |
-| Solana | Coming soon | Not available in v1 |
+| Route            | Direction     | Notes                                                                                 |
+| ---------------- | ------------- | ------------------------------------------------------------------------------------- |
+| BTC ↔ EVM chains | Bidirectional | Supports affiliate fees                                                               |
+| BTC ↔ Tron       | Bidirectional | Tron as source needs `@tetherto/wdk-wallet-tron` ≥ 1.0.0-beta.8 and a TRC-20 approval |
+| EVM ↔ EVM        | Bidirectional | Use `swap()` / `bridge()` (inherited). Affiliate fees not supported on this route.    |
+| Solana           | Coming soon   | Not available in v1                                                                   |
 
 ## Known Limitations & Integration Notes
 
@@ -295,6 +348,10 @@ Returns the ERC-20 approval the caller must grant before executing an offramp or
 - **Offramp tx is registered on broadcast, not after mining:** WDK's `sendTransaction` returns once the tx is broadcast; the module registers the resulting `srcTxHash` immediately. The gateway watches the chain for the registered hash, so no confirmation wait is required — this is expected behaviour, not a race condition.
 
 - **Gas:** The module relies on the WDK account's built-in gas estimation with no extra buffer. If an offramp contract call ever reverts out-of-gas, pass a gas override via the account's send options or raise an issue.
+
+- **Tron source routes need energy or TRX:** The order's contract call is built with the `feeLimit` the gateway returns (100 TRX by default) — that is a ceiling, not a charge, but the sender must still hold enough TRX (or staked energy) to cover the actual energy and bandwidth burn. `simulateSwidge()` returns the quoted fee in sun as `tron.feeEstimate`. If the account was constructed with `transactionMaxFee`, wdk-wallet-tron rejects the send when the quote exceeds it.
+
+- **Tron order calls are pre-built, not passed as descriptors:** The gateway returns pre-encoded calldata, and tronweb accepts raw calldata only via `options.input` with an _empty_ function selector — while wdk-wallet-tron routes its `{ contractAddress, functionSelector }` descriptor on the presence of `functionSelector`. So the module builds the transaction against the resolved provider and hands the account a pre-built one; the account still verifies the owner before signing.
 
 ## 🔒 Security Considerations
 
@@ -316,8 +373,8 @@ pnpm run build:types
 
 The shared mainnet test accounts used by the CI validation and swap lanes are derived from the `op://WDK Gateway/seed/mnemonic` 1Password item (BIP-84 for BTC, BIP-44 for EVM, account index 0). Their public addresses:
 
-| Chain | Address |
-|-------|---------|
+| Chain        | Address                                      |
+| ------------ | -------------------------------------------- |
 | BTC (BIP-84) | `bc1q4qzrf00t40tnqlc374s07dnnywltz0pt2aqmya` |
 | EVM (BIP-44) | `0xea9A10783EBbb42Bfc0e8fb13b5210A57276d560` |
 

@@ -13,6 +13,7 @@ on:
         options:
           - onramp
           - offramp
+          - tron-offramp
           - status
       amount:
         description: "Amount to swap (sats for onramp; USDT 6-decimal units for offramp; leave blank for status)"

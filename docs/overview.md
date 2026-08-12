@@ -8,12 +8,12 @@ A **swidge** converts an asset on one chain and delivers a different asset on an
 
 ## Supported Routes
 
-| Route | Direction | Notes |
-|-------|-----------|-------|
-| BTC ↔ EVM chains | Bidirectional | Full support including affiliate fees |
-| BTC → Tron | Destination only | Tron-as-source not in v1 ([tracking issue](https://github.com/tetherto/wdk-wallet-tron/issues/48)) |
-| EVM ↔ EVM | Bidirectional | Use inherited `swap()` / `bridge()` methods. Affiliate fees not supported. |
-| Solana | Coming soon | Not available in v1 |
+| Route            | Direction     | Notes                                                                                 |
+| ---------------- | ------------- | ------------------------------------------------------------------------------------- |
+| BTC ↔ EVM chains | Bidirectional | Full support including affiliate fees                                                 |
+| BTC ↔ Tron       | Bidirectional | Tron as source needs `@tetherto/wdk-wallet-tron` ≥ 1.0.0-beta.8 and a TRC-20 approval |
+| EVM ↔ EVM        | Bidirectional | Use inherited `swap()` / `bridge()` methods. Affiliate fees not supported.            |
+| Solana           | Coming soon   | Not available in v1                                                                   |
 
 ## Key Concepts
 
@@ -34,9 +34,18 @@ Partners can earn basis-point fees on BTC ↔ EVM routes by setting `config.affi
 - Each entry must have `bps > 0` and a unique, non-zero address.
 - EVM↔EVM routes do not support affiliate fees — they are dropped gracefully.
 
-### ERC-20 Approval (Offramp / Token Swap)
+### ERC-20 / TRC-20 Approval (Offramp / Token Swap)
 
-For routes where the user sends an ERC-20 token (offramp: token → BTC; token swap: token → token), the token must be approved to the gateway spender address before calling `swidge()`. Use `getRequiredApproval(options)` to retrieve the exact `{token, spender, amount}` to approve.
+For routes where the user sends an ERC-20 or TRC-20 token (offramp: token → BTC; token swap: token → token), the token must be approved to the gateway spender address before calling `swidge()`. Use `getRequiredApproval(options)` to retrieve the exact `{token, spender, amount}` to approve.
+
+On Tron there is no `approve()` on the account, so pass the result to `buildTronApproval()` and send the returned call descriptor with `account.sendTransaction()`.
+
+### Tron as a Source Chain
+
+Tron offramps sign an arbitrary contract call, which `WalletAccountTron` gained in `@tetherto/wdk-wallet-tron` 1.0.0-beta.8. Two consequences:
+
+- The gateway's pre-encoded calldata cannot go through the account's `{ contractAddress, functionSelector }` descriptor (tronweb only accepts raw calldata when the selector is empty), so the module builds the transaction itself against a tronweb provider and submits it as a pre-built transaction. The provider defaults to the account's own; override with `config.tronWeb` or `config.tronProvider`.
+- Fees are energy + bandwidth in sun, capped by the `feeLimit` the gateway returns (100 TRX by default). `simulateSwidge()` reports the quote as `tron.feeEstimate`.
 
 ### Runtimes
 

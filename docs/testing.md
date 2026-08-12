@@ -2,11 +2,11 @@
 
 ## Phased approach
 
-| Phase | What runs | What it validates | Requires a funded wallet? |
-|-------|-----------|-------------------|--------------------------|
-| Unit (CI on every PR) | `pnpm test` (all `*.test.ts`, integration skipped) | Types, mapping, adapter logic, mocked HTTP | No |
-| **Validation lane** (this doc) | `pnpm exec vitest run tests/integration` | Quote conformance + sign/simulate (no broadcast) | Yes — seed must be funded |
-| Live swap (gateway-bot) | gateway-bot full swap flow | End-to-end swap including broadcast | Yes — full funded wallet |
+| Phase                          | What runs                                          | What it validates                                | Requires a funded wallet? |
+| ------------------------------ | -------------------------------------------------- | ------------------------------------------------ | ------------------------- |
+| Unit (CI on every PR)          | `pnpm test` (all `*.test.ts`, integration skipped) | Types, mapping, adapter logic, mocked HTTP       | No                        |
+| **Validation lane** (this doc) | `pnpm exec vitest run tests/integration`           | Quote conformance + sign/simulate (no broadcast) | Yes — seed must be funded |
+| Live swap (gateway-bot)        | gateway-bot full swap flow                         | End-to-end swap including broadcast              | Yes — full funded wallet  |
 
 The validation lane is the "everything short of the swap" layer: it hits the real Gateway V3 API for quotes, constructs real signed BTC transactions and EVM gas estimates, but **never broadcasts** and **never calls registerTx**.
 
@@ -60,8 +60,10 @@ EVM address: 0x…
 ```
 
 Fund them:
+
 - **BTC address** — send at least 30 000 sats (~0.0003 BTC) to cover the `AMOUNT_SATS` default plus fees. This fits a ~$50 test wallet; bump `AMOUNT_SATS` if you funded more.
 - **EVM address** — send at least 50 USDT (`AMOUNT_USDT` default = 50 000 000 in 6-decimal units) and a small amount of ETH for gas estimation (≥ 0.001 ETH).
+- **Tron address** (`T…`, BIP-44 `m/44'/195'`) — only needed for the Tron offramp legs. Send at least 50 USDT-TRC20 plus ~30 TRX so the approve and offramp calls have energy/bandwidth headroom. The Tron node defaults to `https://tron.api.pocket.network`; override with `TRON_RPC_URL` (a dedicated endpoint avoids shared-IP rate limits in CI).
 
 ---
 
@@ -86,7 +88,7 @@ AMOUNT_SATS=200000 AMOUNT_USDT=100000000 \
 When `TEST_SEED` is not set, the integration suite reports all its tests as **skipped**, not failed:
 
 ```
-↓ tests/integration/validate.int.test.ts (5 tests | 5 skipped)
+↓ tests/integration/validate.int.test.ts (7 tests | 7 skipped)
 ```
 
 This is the expected behaviour in PR CI where secrets are not injected.
@@ -97,10 +99,10 @@ This is the expected behaviour in PR CI where secrets are not injected.
 
 The offramp `simulateSwidge` test accepts two valid outcomes:
 
-| Outcome | When it happens |
-|---------|----------------|
-| `valid: true`, `requiredApproval: null` | Account already has a standing USDT allowance, or `EVM_RPC_URL` points at a Tenderly virtual testnet with state-override |
-| `valid: false`, `requiredApproval: { token, spender, amount }` | No standing USDT allowance on the account (normal for a fresh wallet on mainnet) |
+| Outcome                                                        | When it happens                                                                                                          |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `valid: true`, `requiredApproval: null`                        | Account already has a standing USDT allowance, or `EVM_RPC_URL` points at a Tenderly virtual testnet with state-override |
+| `valid: false`, `requiredApproval: { token, spender, amount }` | No standing USDT allowance on the account (normal for a fresh wallet on mainnet)                                         |
 
 A third outcome — `valid: false`, `requiredApproval: null` — would indicate a hard error and causes the test to fail.
 
@@ -112,13 +114,14 @@ To move to the first outcome without a real on-chain approval, configure `rpc-et
 
 > **Warning:** the steps below broadcast real mainnet transactions and move real money. Follow the phase order and read each step carefully.
 
-### Overview of the three phases
+### Overview of the phases
 
-| Phase | `PHASE=` | What it does | Irreversible? |
-|-------|---------|--------------|--------------|
-| **onramp** | `onramp` | BTC → USDT@Ethereum — builds and broadcasts a BTC transaction | Yes |
-| **offramp** | `offramp` | USDT@Ethereum → BTC — checks/waits for ERC-20 approval, then broadcasts an EVM tx | Yes |
-| **status** | `status` | Read-only — prints order status, EVM USDT balance, and BTC address | No |
+| Phase            | `PHASE=`       | What it does                                                                        | Irreversible? |
+| ---------------- | -------------- | ----------------------------------------------------------------------------------- | ------------- |
+| **onramp**       | `onramp`       | BTC → USDT@Ethereum — builds and broadcasts a BTC transaction                       | Yes           |
+| **offramp**      | `offramp`      | USDT@Ethereum → BTC — checks/waits for ERC-20 approval, then broadcasts an EVM tx   | Yes           |
+| **tron-offramp** | `tron-offramp` | USDT@Tron → BTC — sends the TRC-20 approve (via `buildTronApproval`), then the call | Yes           |
+| **status**       | `status`       | Read-only — prints order status plus EVM, BTC, and Tron balances                    | No            |
 
 ### Recommended sequence
 
@@ -147,6 +150,9 @@ TEST_SEED="<mnemonic>" PHASE=status ORDER_ID=<id> pnpm execute-swap
 
 # Offramp example (50 USDT = 50 000 000 in 6dp)
 TEST_SEED="<mnemonic>" PHASE=offramp AMOUNT=50000000 pnpm execute-swap
+
+# Tron offramp example (50 USDT-TRC20 = 50 000 000 in 6dp)
+TEST_SEED="<mnemonic>" PHASE=tron-offramp AMOUNT=50000000 pnpm execute-swap
 ```
 
 Use `op run` to inject the seed from 1Password instead of exporting it to the shell:

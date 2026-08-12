@@ -1,8 +1,6 @@
 import { GatewaySwidgeError, ERR } from '../errors.js'
 import type { SwidgeVariant } from '../chains.js'
 
-export type OrderKind = 'btc' | 'evm'
-
 export interface BtcOrderPayload {
   orderId: string
   kind: 'btc'
@@ -16,22 +14,28 @@ export interface EvmOrderPayload {
   tx: { to: string; data: string; value: string }
 }
 
-export type OrderPayload = BtcOrderPayload | EvmOrderPayload
+export interface TronOrderPayload {
+  orderId: string
+  kind: 'tron'
+  tx: { to: string; data: string; value: string; feeLimit?: string }
+}
+
+export type OrderPayload = BtcOrderPayload | EvmOrderPayload | TronOrderPayload
 
 interface OnrampOrder {
   order_id: string
   address: string
 }
 
-interface EvmOrder {
+interface CallOrder {
   order_id: string
-  tx: { to: string; data: string; value: string }
+  tx: { type?: string; to: string; data: string; value: string; feeLimit?: string }
 }
 
 interface RawOrder {
   onramp?: OnrampOrder
-  offramp?: EvmOrder
-  tokenSwap?: EvmOrder
+  offramp?: CallOrder
+  tokenSwap?: CallOrder
   [key: string]: unknown
 }
 
@@ -50,11 +54,19 @@ interface RawQuote {
  * The wire response is an externally-tagged union: `{ onramp: {...} }` |
  * `{ offramp: {...} }` | `{ tokenSwap: {...} }`.
  *
+ * The `tx` of an offramp/tokenSwap order is itself an internally-tagged union
+ * (`GatewayTxData`) discriminated by `tx.type` — `evm` | `tron` | `solana`. The
+ * tag is absent on older EVM responses, so a missing `type` means EVM.
+ *
  * Note: the onramp create-order response carries no amount field, so the BTC
  * send amount is sourced from the quote (`quote.onramp.inputAmount.amount`).
  */
-export function orderPayload(order: RawOrder, variant: SwidgeVariant, quote?: RawQuote): OrderPayload {
-  const o = order[variant] as (OnrampOrder & EvmOrder) | undefined
+export function orderPayload(
+  order: RawOrder,
+  variant: SwidgeVariant,
+  quote?: RawQuote
+): OrderPayload {
+  const o = order[variant] as (OnrampOrder & CallOrder) | undefined
   if (!o || !o.order_id) {
     throw new GatewaySwidgeError(ERR.HTTP, `create-order missing ${variant}.orderId`, {
       cause: order,
@@ -68,9 +80,21 @@ export function orderPayload(order: RawOrder, variant: SwidgeVariant, quote?: Ra
       amount: BigInt(quote!.onramp!.inputAmount.amount),
     }
   }
-  return {
-    orderId: o.order_id,
-    kind: 'evm',
-    tx: { to: o.tx.to, data: o.tx.data, value: o.tx.value },
+  const tx = o.tx
+  if (!tx) {
+    throw new GatewaySwidgeError(ERR.HTTP, `create-order missing ${variant}.tx`, { cause: order })
   }
+  if (tx.type === 'tron') {
+    return {
+      orderId: o.order_id,
+      kind: 'tron',
+      tx: { to: tx.to, data: tx.data, value: tx.value, feeLimit: tx.feeLimit },
+    }
+  }
+  if (tx.type != null && tx.type !== 'evm') {
+    throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, `order tx type '${tx.type}' is not supported`, {
+      cause: order,
+    })
+  }
+  return { orderId: o.order_id, kind: 'evm', tx: { to: tx.to, data: tx.data, value: tx.value } }
 }

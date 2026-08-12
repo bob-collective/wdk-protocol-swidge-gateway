@@ -12,6 +12,7 @@ import { bitcoinAdapter } from '../src/chain-adapters/bitcoin.js'
 import { evmAdapter } from '../src/chain-adapters/evm.js'
 import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
+import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,37 @@ function fakeEvmClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
   } as unknown as GatewayClient
 }
 
+const USDT_TRON = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+
+function fakeTronClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
+  return {
+    getQuote: vi.fn(async () => ({
+      offramp: {
+        inputAmount: { amount: '1000000' },
+        outputAmount: { amount: '900' },
+        srcChain: 'tron',
+      },
+    })),
+    createOrder: vi.fn(async () => ({
+      offramp: {
+        order_id: 'sim-order-tron',
+        tx: {
+          type: 'tron',
+          to: REGISTRY,
+          data: '0xfeed',
+          value: '0',
+          chain: 'tron',
+          feeLimit: '100000000',
+        },
+      },
+    })),
+    registerTx: vi.fn(async () => ({})),
+    getOrder: vi.fn(async () => ({ status: { success: { received_tokens: [] } } })),
+    getRoutes: vi.fn(async () => []),
+    ...overrides,
+  } as unknown as GatewayClient
+}
+
 // ─── bitcoinAdapter.simulate() ────────────────────────────────────────────────
 
 describe('bitcoinAdapter.simulate()', () => {
@@ -69,8 +101,16 @@ describe('bitcoinAdapter.simulate()', () => {
       getAddress: vi.fn(() => 'bc1qtest'),
       signTransaction: vi.fn(async () => hex),
     }
-    const result = await bitcoinAdapter.simulate(account, { address: DEPOSIT_ADDR, amount: AMOUNT }, {})
-    expect(account.signTransaction).toHaveBeenCalledWith({ to: DEPOSIT_ADDR, value: AMOUNT, feeRate: undefined })
+    const result = await bitcoinAdapter.simulate(
+      account,
+      { address: DEPOSIT_ADDR, amount: AMOUNT },
+      {}
+    )
+    expect(account.signTransaction).toHaveBeenCalledWith({
+      to: DEPOSIT_ADDR,
+      value: AMOUNT,
+      feeRate: undefined,
+    })
     expect(result.valid).toBe(true)
     expect(result.paidToDeposit).toBe(AMOUNT)
     expect(result.signedTxHex).toBe(hex)
@@ -84,7 +124,11 @@ describe('bitcoinAdapter.simulate()', () => {
       getAddress: vi.fn(() => 'bc1qtest'),
       signTransaction: vi.fn(async () => hex),
     }
-    const result = await bitcoinAdapter.simulate(account, { address: DEPOSIT_ADDR, amount: AMOUNT }, {})
+    const result = await bitcoinAdapter.simulate(
+      account,
+      { address: DEPOSIT_ADDR, amount: AMOUNT },
+      {}
+    )
     expect(result.valid).toBe(false)
     expect(result.paidToDeposit).toBe(lessAmount)
   })
@@ -92,7 +136,11 @@ describe('bitcoinAdapter.simulate()', () => {
   test('throws NOT_SUPPORTED when signTransaction is missing', async () => {
     const account = { getAddress: vi.fn(() => 'bc1qtest') }
     await expect(
-      bitcoinAdapter.simulate(account as Parameters<typeof bitcoinAdapter.simulate>[0], { address: DEPOSIT_ADDR, amount: AMOUNT }, {})
+      bitcoinAdapter.simulate(
+        account as Parameters<typeof bitcoinAdapter.simulate>[0],
+        { address: DEPOSIT_ADDR, amount: AMOUNT },
+        {}
+      )
     ).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
   })
 })
@@ -107,7 +155,11 @@ describe('evmAdapter.simulate()', () => {
       quoteSendTransaction: vi.fn(async () => ({ fee: 21000n })),
     }
     const payload = { kind: 'evm' as const, tx: { to: '0xspender', data: '0xd', value: '0' } }
-    const result = await evmAdapter.simulate(account, payload, { token: '0xtok', spender: '0xspender', amount: 1000n })
+    const result = await evmAdapter.simulate(account, payload, {
+      token: '0xtok',
+      spender: '0xspender',
+      amount: 1000n,
+    })
     expect(result.valid).toBe(true)
     expect(result.gasEstimate).toBe(21000n)
     expect(result.requiredApproval).toBeNull()
@@ -118,10 +170,16 @@ describe('evmAdapter.simulate()', () => {
     const account = {
       getAllowance: vi.fn(async () => 0n),
       sendTransaction: vi.fn(),
-      quoteSendTransaction: vi.fn(async () => { throw new Error('execution reverted: insufficient allowance') }),
+      quoteSendTransaction: vi.fn(async () => {
+        throw new Error('execution reverted: insufficient allowance')
+      }),
     }
     const payload = { kind: 'evm' as const, tx: { to: '0xspender', data: '0xd', value: '0' } }
-    const result = await evmAdapter.simulate(account, payload, { token: '0xtok', spender: '0xspender', amount: 1000n })
+    const result = await evmAdapter.simulate(account, payload, {
+      token: '0xtok',
+      spender: '0xspender',
+      amount: 1000n,
+    })
     expect(result.valid).toBe(false)
     expect(result.gasEstimate).toBeNull()
     expect(result.reason).toContain('insufficient allowance')
@@ -136,9 +194,33 @@ describe('evmAdapter.simulate()', () => {
       quoteSendTransaction: vi.fn(async () => ({ fee: 21000n })),
     }
     const payload = { kind: 'evm' as const, tx: { to: '0xspender', data: '0xd', value: '0' } }
-    const result = await evmAdapter.simulate(account, payload, { token: '0xtok', spender: '0xspender', amount: 1000n })
+    const result = await evmAdapter.simulate(account, payload, {
+      token: '0xtok',
+      spender: '0xspender',
+      amount: 1000n,
+    })
     expect(result.valid).toBe(true)
     expect(result.requiredApproval).toEqual({ token: '0xtok', spender: '0xspender', amount: 1000n })
+  })
+
+  test('valid: false when the allowance read itself fails, no rethrow', async () => {
+    const account = {
+      getAllowance: vi.fn(async () => {
+        throw new Error('node unreachable')
+      }),
+      sendTransaction: vi.fn(),
+      quoteSendTransaction: vi.fn(async () => ({ fee: 21000n })),
+    }
+    const payload = { kind: 'evm' as const, tx: { to: '0xspender', data: '0xd', value: '0' } }
+    const result = await evmAdapter.simulate(account, payload, {
+      token: '0xtok',
+      spender: '0xspender',
+      amount: 1000n,
+    })
+    expect(result.valid).toBe(false)
+    expect(result.reason).toContain('node unreachable')
+    expect(result.requiredApproval).toBeNull()
+    expect(account.quoteSendTransaction).not.toHaveBeenCalled()
   })
 
   test('throws NOT_SUPPORTED when quoteSendTransaction is missing', async () => {
@@ -215,7 +297,9 @@ describe('GatewaySwidge.simulateSwidge()', () => {
       getAddress: async () => '0xsender',
       getAllowance: vi.fn(async () => 0n),
       sendTransaction: vi.fn(),
-      quoteSendTransaction: vi.fn(async () => { throw new Error('execution reverted') }),
+      quoteSendTransaction: vi.fn(async () => {
+        throw new Error('execution reverted')
+      }),
     }
     const client = fakeEvmClient()
     const sw = new GatewaySwidge(account, { fromChain: 'base', client })
@@ -232,8 +316,67 @@ describe('GatewaySwidge.simulateSwidge()', () => {
     if ('evm' in result) {
       expect(result.evm.valid).toBe(false)
       expect(result.evm.reason).toBeTruthy()
-      expect(result.evm.requiredApproval).toEqual({ token: '0xtok', spender: '0xspender', amount: 1000n })
+      expect(result.evm.requiredApproval).toEqual({
+        token: '0xtok',
+        spender: '0xspender',
+        amount: 1000n,
+      })
     }
+    expect(account.sendTransaction).not.toHaveBeenCalled()
+    expect(client.registerTx).not.toHaveBeenCalled()
+  })
+
+  test('offramp simulate from tron: fee quoted from the built call, approval reported', async () => {
+    const triggerSmartContract = vi.fn(
+      async (
+        to: string,
+        _selector: string,
+        options: { input: string; callValue: number; feeLimit: number },
+        _parameters: unknown[],
+        owner: string
+      ) => ({
+        transaction: buildTronTx({
+          to,
+          owner,
+          data: options.input,
+          callValue: options.callValue,
+          feeLimit: options.feeLimit,
+        }),
+      })
+    )
+    const account = {
+      getAddress: async () => OWNER,
+      sendTransaction: vi.fn(),
+      quoteSendTransaction: vi.fn(async () => ({ fee: 27_000_000n, activationFee: 0n })),
+      _tronWeb: {
+        transactionBuilder: {
+          triggerSmartContract,
+          // allowance() → 0, so the approval is still outstanding
+          triggerConstantContract: vi.fn(async () => ({ constant_result: ['0'.repeat(64)] })),
+        },
+      },
+    }
+    const client = fakeTronClient()
+    const sw = new GatewaySwidge(account, { fromChain: 'tron', client })
+    const result = await sw.simulateSwidge({
+      fromToken: USDT_TRON,
+      toToken: 'BTC',
+      toChain: 'bitcoin',
+      recipient: 'bc1qrcpt',
+      fromTokenAmount: 1_000_000n,
+    })
+    expect(result.variant).toBe('offramp')
+    expect('tron' in result).toBe(true)
+    if ('tron' in result) {
+      expect(result.tron.valid).toBe(true)
+      expect(result.tron.feeEstimate).toBe(27_000_000n)
+      expect(result.tron.requiredApproval).toEqual({
+        token: USDT_TRON,
+        spender: REGISTRY,
+        amount: 1_000_000n,
+      })
+    }
+    expect(account.quoteSendTransaction).toHaveBeenCalled()
     expect(account.sendTransaction).not.toHaveBeenCalled()
     expect(client.registerTx).not.toHaveBeenCalled()
   })
