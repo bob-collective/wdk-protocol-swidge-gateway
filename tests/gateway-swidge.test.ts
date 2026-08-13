@@ -4,6 +4,8 @@ import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
 import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
 
+const TRON_TXID = buildTronTx({ data: 'feed', feeLimit: 100_000_000 }).txID
+
 function buildMinimalTxHex(): { hex: string; txid: string } {
   const tx = new Transaction()
   tx.addInput(Buffer.alloc(32, 0), 0)
@@ -211,7 +213,7 @@ describe('GatewaySwidge', () => {
     )
     const account = {
       getAddress: async () => OWNER,
-      sendTransaction: vi.fn(async () => ({ hash: 'a1b2c3' })),
+      sendTransaction: vi.fn(async (tx: { txID: string }) => ({ hash: tx.txID })),
       _tronWeb: {
         transactionBuilder: { triggerSmartContract },
         trx: { getTransaction: vi.fn(async (txid: string) => ({ txID: txid })) },
@@ -234,10 +236,10 @@ describe('GatewaySwidge', () => {
     )
     // The Tron txid goes on the wire bare — the gateway parses it with or without 0x.
     expect(tronClient.registerTx).toHaveBeenCalledWith({
-      offramp: { order_id: 'o-tron', src_tx_hash: 'a1b2c3', src_chain: 'tron' },
+      offramp: { order_id: 'o-tron', src_tx_hash: TRON_TXID, src_chain: 'tron' },
     })
     expect(res.id).toBe('o-tron')
-    expect(res.hash).toBe('a1b2c3')
+    expect(res.hash).toBe(TRON_TXID)
   })
 
   test('swidge offramp from tron: config.tronConfirmTimeoutMs bounds the broadcast read-back', async () => {
@@ -261,7 +263,7 @@ describe('GatewaySwidge', () => {
     })
     const account = {
       getAddress: async () => OWNER,
-      sendTransaction: vi.fn(async () => ({ hash: 'a1b2c3' })),
+      sendTransaction: vi.fn(async (tx: { txID: string }) => ({ hash: tx.txID })),
       _tronWeb: {
         transactionBuilder: {
           triggerSmartContract: vi.fn(
@@ -298,7 +300,9 @@ describe('GatewaySwidge', () => {
         recipient: 'bc1qrcpt',
         fromTokenAmount: 1000000n,
       })
-    ).rejects.toThrow(/does not know transaction a1b2c3 0ms after broadcasting it/)
+    ).rejects.toThrow(
+      new RegExp(`does not know transaction ${TRON_TXID} 0ms after broadcasting it`)
+    )
     expect(getTransaction).toHaveBeenCalledTimes(1)
     expect(tronClient.registerTx).not.toHaveBeenCalled()
   })

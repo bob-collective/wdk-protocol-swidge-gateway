@@ -202,11 +202,13 @@ provider of its own regardless. Prefer a real tronweb instance for `config.tronW
 module re-checks the built transaction itself before signing, and a real instance adds
 tronweb's own check that the node's response matches the call that was requested.
 
-The node is also read back after broadcasting, through `trx.getTransaction`. A Tron node
-echoes the transaction's locally computed txID in its **rejection** body as well, and
-`WalletAccountTron.sendTransaction` returns that hash without reading the status — so a
-hash on its own does not mean anything was accepted. A provider that cannot answer
-`trx.getTransaction` is refused before anything is signed.
+The hash the account reports back must equal the `txID` of the transaction that was checked
+and signed locally (case and any `0x` prefix aside); a node answering with some other
+existing txid is rejected instead of having that foreign hash registered. That txID is then
+read back through `trx.getTransaction`. A Tron node echoes the transaction's locally computed
+txID in its **rejection** body as well, and `WalletAccountTron.sendTransaction` returns that
+hash without reading the status — so a hash on its own does not mean anything was accepted. A
+provider that cannot answer `trx.getTransaction` is refused before anything is signed.
 
 ### Affiliate Fees
 

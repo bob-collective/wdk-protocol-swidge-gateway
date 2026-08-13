@@ -315,6 +315,10 @@ function resolveGetTransaction(tronWeb: TronWebLike): (txid: string) => Promise<
   return (txid) => trx.getTransaction(txid)
 }
 
+function normalizeTxid(txid: string): string {
+  return txid.replace(/^0x/i, '').toLowerCase()
+}
+
 async function assertBroadcast(
   getTransaction: (txid: string) => Promise<unknown>,
   txid: string,
@@ -411,12 +415,22 @@ export const tronAdapter = {
         { cause: result }
       )
     }
+    const txid = normalizeTxid(unsigned.txID)
+    if (normalizeTxid(hash) !== txid) {
+      throw new GatewaySwidgeError(
+        ERR.HTTP,
+        `the tron account broadcast returned hash ${hash}, but the transaction we built and ` +
+          `signed is ${unsigned.txID}, so that hash is not ours and must not be registered. ` +
+          'Check both txids on chain before sending the same transfer again',
+        { cause: result }
+      )
+    }
     await assertBroadcast(
       getTransaction,
-      hash,
+      txid,
       opts.confirmTimeoutMs ?? BROADCAST_CONFIRM_TIMEOUT_MS
     )
-    return { txid: hash }
+    return { txid }
   },
 
   async simulate(
