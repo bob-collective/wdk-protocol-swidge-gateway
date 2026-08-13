@@ -4,6 +4,8 @@ import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
 import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
 
+const TRON_TXID = buildTronTx({ data: 'feed', feeLimit: 100_000_000 }).txID
+
 function buildMinimalTxHex(): { hex: string; txid: string } {
   const tx = new Transaction()
   tx.addInput(Buffer.alloc(32, 0), 0)
@@ -211,8 +213,11 @@ describe('GatewaySwidge', () => {
     )
     const account = {
       getAddress: async () => OWNER,
-      sendTransaction: vi.fn(async () => ({ hash: 'a1b2c3' })),
-      _tronWeb: { transactionBuilder: { triggerSmartContract } },
+      sendTransaction: vi.fn(async (tx: { txID: string }) => ({ hash: tx.txID })),
+      _tronWeb: {
+        transactionBuilder: { triggerSmartContract },
+        trx: { getTransaction: vi.fn(async (txid: string) => ({ txID: txid })) },
+      },
     }
     const sw = new GatewaySwidge(account, { fromChain: 'tron', client: tronClient })
     const res = await sw.swidge({
@@ -231,10 +236,75 @@ describe('GatewaySwidge', () => {
     )
     // The Tron txid goes on the wire bare — the gateway parses it with or without 0x.
     expect(tronClient.registerTx).toHaveBeenCalledWith({
-      offramp: { order_id: 'o-tron', src_tx_hash: 'a1b2c3', src_chain: 'tron' },
+      offramp: { order_id: 'o-tron', src_tx_hash: TRON_TXID, src_chain: 'tron' },
     })
     expect(res.id).toBe('o-tron')
-    expect(res.hash).toBe('a1b2c3')
+    expect(res.hash).toBe(TRON_TXID)
+  })
+
+  test('swidge offramp from tron: config.tronConfirmTimeoutMs bounds the broadcast read-back', async () => {
+    const tronClient = fakeClient({
+      getQuote: vi.fn(async () => ({
+        offramp: {
+          inputAmount: { amount: '1000000' },
+          outputAmount: { amount: '900' },
+          srcChain: 'tron',
+        },
+      })) as unknown as GatewayClient['getQuote'],
+      createOrder: vi.fn(async () => ({
+        offramp: {
+          order_id: 'o-tron',
+          tx: { type: 'tron', to: REGISTRY, data: '0xfeed', value: '0', feeLimit: '100000000' },
+        },
+      })) as unknown as GatewayClient['createOrder'],
+    })
+    const getTransaction = vi.fn(async () => {
+      throw new Error('Transaction not found')
+    })
+    const account = {
+      getAddress: async () => OWNER,
+      sendTransaction: vi.fn(async (tx: { txID: string }) => ({ hash: tx.txID })),
+      _tronWeb: {
+        transactionBuilder: {
+          triggerSmartContract: vi.fn(
+            async (
+              to: string,
+              _selector: string,
+              options: { input: string; callValue: number; feeLimit: number },
+              _parameters: unknown[],
+              owner: string
+            ) => ({
+              transaction: buildTronTx({
+                to,
+                owner,
+                data: options.input,
+                callValue: options.callValue,
+                feeLimit: options.feeLimit,
+              }),
+            })
+          ),
+        },
+        trx: { getTransaction },
+      },
+    }
+    const sw = new GatewaySwidge(account, {
+      fromChain: 'tron',
+      client: tronClient,
+      tronConfirmTimeoutMs: 0,
+    })
+    await expect(
+      sw.swidge({
+        fromToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+        toToken: 'BTC',
+        toChain: 'bitcoin',
+        recipient: 'bc1qrcpt',
+        fromTokenAmount: 1000000n,
+      })
+    ).rejects.toThrow(
+      new RegExp(`does not know transaction ${TRON_TXID} 0ms after broadcasting it`)
+    )
+    expect(getTransaction).toHaveBeenCalledTimes(1)
+    expect(tronClient.registerTx).not.toHaveBeenCalled()
   })
 
   test.each([

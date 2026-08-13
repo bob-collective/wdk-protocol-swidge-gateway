@@ -10,8 +10,8 @@
  * Optional env:
  *   EVM_RPC_URL  — Ethereum JSON-RPC URL (default: https://ethereum-rpc.publicnode.com)
  *   TRON_RPC_URL — Tron full-node URL (default: https://tron.api.pocket.network)
- *   PHASE        — onramp | offramp | tron-offramp | status
- *   AMOUNT       — integer string: sats for onramp, USDT 6-decimal units for either offramp
+ *   PHASE        — onramp | tron-onramp | offramp | tron-offramp | status
+ *   AMOUNT       — integer string: sats for either onramp, USDT 6-decimal units for either offramp
  *   ORDER_ID     — gateway order ID (required for status phase)
  *
  * Run (after pnpm build):
@@ -31,7 +31,7 @@ const USDT = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
 const USDT_TRON = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
 const USDT_BALANCE_ABI = ['function balanceOf(address owner) view returns (uint256)']
 
-const PHASES = ['onramp', 'offramp', 'tron-offramp', 'status'] as const
+const PHASES = ['onramp', 'tron-onramp', 'offramp', 'tron-offramp', 'status'] as const
 type Phase = (typeof PHASES)[number]
 
 const POLL_INTERVAL_MS = 10_000
@@ -110,6 +110,44 @@ function logSwidgeResult(txLabel: string, result: SwidgeResult): void {
   console.log(`fromTokenAmount="${String(result.fromTokenAmount)}"`)
 }
 
+interface TronTrx {
+  getTransaction(id: string): Promise<unknown>
+}
+
+function requireTronTrx(): TronTrx {
+  const { _tronWeb: tronWeb } = tronAccount as unknown as {
+    _tronWeb?: { trx?: Partial<TronTrx> }
+  }
+  if (typeof tronWeb?.trx?.getTransaction !== 'function') {
+    fail('the Tron account has no tronweb provider, so the broadcast cannot be confirmed')
+  }
+  return tronWeb.trx as TronTrx
+}
+
+function readsBackAs(res: unknown, hash: string): boolean {
+  const found = (res as { txID?: unknown } | null | undefined)?.txID
+  return typeof found === 'string' && found.toLowerCase() === hash.toLowerCase()
+}
+
+async function assertTronBroadcast(hash: string): Promise<void> {
+  const trx = requireTronTrx()
+  const deadline = Date.now() + 20_000
+  let last: unknown
+  for (;;) {
+    try {
+      const res = await trx.getTransaction(hash)
+      if (readsBackAs(res, hash)) return
+      last = res
+    } catch (err) {
+      last = err
+    }
+    if (Date.now() >= deadline) break
+    await new Promise((resolve) => setTimeout(resolve, 1_500))
+  }
+  console.error('Broadcast lookup answered with:', last)
+  fail(`Tron node does not know tx ${hash} 20 s after broadcast — the node rejected it.`)
+}
+
 /** `probe` reports its own log detail, so each chain prints what it actually measured. */
 async function waitForApproval(
   probe: () => Promise<{ done: boolean; detail: string }>
@@ -144,6 +182,28 @@ switch (PHASE) {
         toToken: USDT,
         toChain: 'ethereum',
         recipient: evmAddress,
+        fromTokenAmount,
+        refundAddress: btcAddress,
+      })
+      logSwidgeResult('BTC_TXID', result)
+    })
+    break
+  }
+
+  // BTC → USDT@Tron. Broadcasts a real BTC transaction. Irreversible.
+  case 'tron-onramp': {
+    const fromTokenAmount = requireAmount('sats, integer')
+    console.log(
+      `PHASE=tron-onramp  fromTokenAmount=${AMOUNT} sats  recipient=${tronAddress}  refundAddress=${btcAddress}`
+    )
+
+    await runPhase('tron-onramp', async () => {
+      const sw = new GatewaySwidge(btcAccount, { fromChain: 'bitcoin' })
+      const result = await sw.swidge({
+        fromToken: 'BTC',
+        toToken: USDT_TRON,
+        toChain: 'tron',
+        recipient: tronAddress,
         fromTokenAmount,
         refundAddress: btcAddress,
       })
@@ -210,12 +270,37 @@ switch (PHASE) {
         refundAddress: tronAddress,
       }
 
+      const [trxBalance, usdtBalance] = await Promise.all([
+        tronAccount.getBalance(),
+        tronAccount.getTokenBalance(USDT_TRON),
+      ])
+      console.log(`Tron balances: TRX=${String(trxBalance)} sun  USDT=${String(usdtBalance)} (6dp)`)
+      if (BigInt(usdtBalance) < fromTokenAmount) {
+        fail(
+          `USDT-TRC20 balance ${String(usdtBalance)} is below the ${String(fromTokenAmount)} to swap. Fund ${tronAddress}.`
+        )
+      }
+      if (BigInt(trxBalance) === 0n) {
+        fail(
+          `TRX balance is 0, so ${tronAddress} is unactivated and can pay for neither energy nor bandwidth. Fund it with ~30 TRX.`
+        )
+      }
+
       const approval = await sw.getRequiredApproval(opts)
       if (approval === null) {
         console.log('No approval required (allowance already sufficient).')
       } else {
         logApprovalRequired(approval)
-        logApprovalTx(await tronAccount.sendTransaction(buildTronApproval(approval)))
+        const approvalCall = buildTronApproval(approval)
+        const { fee: approvalFee } = await tronAccount.quoteSendTransaction(approvalCall)
+        if (BigInt(trxBalance) < BigInt(approvalFee)) {
+          fail(
+            `TRX balance ${String(trxBalance)} sun cannot cover the ${String(approvalFee)} sun approval fee. Fund ${tronAddress}.`
+          )
+        }
+        const approvalTx = await tronAccount.sendTransaction(approvalCall)
+        logApprovalTx(approvalTx)
+        await assertTronBroadcast(approvalTx.hash)
         // The spender is cached, so re-checking costs no extra gateway orders.
         await waitForApproval(async () => {
           const still = await sw.getRequiredApproval(opts)

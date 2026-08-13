@@ -5,6 +5,8 @@ import { run as quoteAndStatus } from '../examples/quote-and-status.js'
 import { run as offrampTron } from '../examples/offramp-usdt-tron-to-btc.js'
 import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
 
+const TRON_TXID = buildTronTx({ data: 'feed', feeLimit: 100_000_000 }).txID
+
 function makeMockHttp() {
   return {
     request: vi.fn(async (_method: string, url: string) => {
@@ -93,8 +95,9 @@ function makeTronAccount() {
     sendTransaction: vi.fn(async (tx: unknown) => {
       if ((tx as { functionSelector?: string }).functionSelector === 'approve(address,uint256)') {
         approved = true
+        return { hash: 'approve-hash' }
       }
-      return { hash: 'a1b2c3' }
+      return { hash: (tx as { txID: string }).txID }
     }),
     _tronWeb: {
       transactionBuilder: {
@@ -119,6 +122,7 @@ function makeTronAccount() {
           constant_result: [(approved ? 10n ** 30n : 0n).toString(16).padStart(64, '0')],
         })),
       },
+      trx: { getTransaction: vi.fn(async (txid: string) => ({ txID: txid })) },
     },
   }
 }
@@ -145,7 +149,7 @@ describe('examples smoke', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const res = await (offrampTron as any)({ account, http })
     expect(res.id).toBe('tron-1')
-    expect(res.hash).toBe('a1b2c3')
+    expect(res.hash).toBe(TRON_TXID)
     expect(account.sendTransaction).toHaveBeenCalledTimes(2)
     expect(account.sendTransaction.mock.calls[0][0]).toMatchObject({
       functionSelector: 'approve(address,uint256)',

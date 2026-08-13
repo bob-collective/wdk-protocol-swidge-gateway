@@ -8,13 +8,20 @@ const FAMILY_TO_TYPE: Record<string, 'utxo' | 'svm' | 'evm'> = {
   evm: 'evm',
 }
 
+const FAMILY_TO_NATIVE_TOKEN: Record<string, string> = {
+  bitcoin: 'BTC',
+  solana: 'SOL',
+  tron: 'TRX',
+  evm: 'ETH',
+}
+
 function chainEntry(id: string): SwidgeSupportedChain {
   const family = chainFamily(id)
   return {
     id,
     name: id,
     type: FAMILY_TO_TYPE[family] || 'evm',
-    nativeToken: family === 'bitcoin' ? 'BTC' : 'ETH',
+    nativeToken: FAMILY_TO_NATIVE_TOKEN[family] || 'ETH',
   }
 }
 

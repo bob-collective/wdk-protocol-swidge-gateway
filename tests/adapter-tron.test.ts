@@ -20,14 +20,17 @@ function word(n: bigint): string {
 
 type FakeTronWeb = TronWebLike & {
   transactionBuilder: Record<string, ReturnType<typeof vi.fn>>
+  trx: { getTransaction: ReturnType<typeof vi.fn> }
 }
 
 /**
  * A node that honours the call it was asked to build. Responses are derived from the
  * arguments, so the adapter's pre-signing checks pass unless a test bends them.
+ * `trx.getTransaction` answers, i.e. the node accepted what was broadcast.
  */
 function fakeTronWeb(overrides: Partial<TronWebLike['transactionBuilder']> = {}): FakeTronWeb {
   return {
+    trx: { getTransaction: vi.fn(async (txid: string) => ({ txID: txid })) },
     transactionBuilder: {
       triggerSmartContract: vi.fn(
         async (
@@ -62,10 +65,13 @@ function hostileTronWeb(tx: unknown): FakeTronWeb {
 // The gateway's TronTxData: base58 `to`, 0x-prefixed calldata, sun `value`/`feeLimit`.
 const TX = { to: REGISTRY, data: '0xabcdef', value: '0', feeLimit: '50000000' }
 
+/** txID of the transaction `fakeTronWeb` builds for `TX`. */
+const TXID = buildTronTx().txID
+
 function sender(overrides: Record<string, unknown> = {}) {
   return {
     getAddress: async () => OWNER,
-    sendTransaction: vi.fn(async () => ({ hash: 't' })),
+    sendTransaction: vi.fn(async (tx: { txID: string }) => ({ hash: tx.txID })),
     ...overrides,
   }
 }
@@ -73,7 +79,7 @@ function sender(overrides: Record<string, unknown> = {}) {
 describe('tronAdapter.send', () => {
   test('builds the call from raw calldata and broadcasts the pre-built tx', async () => {
     const tronWeb = fakeTronWeb()
-    const account = sender({ sendTransaction: vi.fn(async () => ({ hash: 'txid1' })) })
+    const account = sender()
     const out = await tronAdapter.send(account, { tx: TX }, { tronWeb })
 
     // Empty selector + options.input is the only tronweb path that accepts pre-encoded
@@ -86,7 +92,7 @@ describe('tronAdapter.send', () => {
       OWNER
     )
     expect(account.sendTransaction).toHaveBeenCalledWith(buildTronTx())
-    expect(out).toEqual({ txid: 'txid1' })
+    expect(out).toEqual({ txid: TXID })
   })
 
   test('falls back to the 100 TRX default when the order omits feeLimit', async () => {
@@ -218,8 +224,145 @@ describe('tronAdapter.send', () => {
   test('a node that omits the status field is still accepted', async () => {
     const tronWeb = fakeTronWeb()
     await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).resolves.toEqual({
-      txid: 't',
+      txid: TXID,
     })
+  })
+})
+
+describe('tronAdapter.send confirms the broadcast', () => {
+  test('reads the returned hash back from the node', async () => {
+    const tronWeb = fakeTronWeb()
+    await tronAdapter.send(sender(), { tx: TX }, { tronWeb })
+    expect(tronWeb.trx.getTransaction).toHaveBeenCalledWith(TXID)
+  })
+
+  test('rejects a hash that is not the txID we signed, before looking it up', async () => {
+    const tronWeb = fakeTronWeb()
+    const foreign = buildTronTx({ data: 'deadbeef' }).txID
+    const account = sender({ sendTransaction: vi.fn(async () => ({ hash: foreign })) })
+    await expect(tronAdapter.send(account, { tx: TX }, { tronWeb })).rejects.toThrow(
+      new RegExp(`returned hash ${foreign}, but the transaction we built and signed is ${TXID}`)
+    )
+    expect(tronWeb.trx.getTransaction).not.toHaveBeenCalled()
+  })
+
+  test('accepts the same txID in upper case and with an 0x prefix', async () => {
+    const tronWeb = fakeTronWeb()
+    const account = sender({
+      sendTransaction: vi.fn(async () => ({ hash: `0x${TXID.toUpperCase()}` })),
+    })
+    await expect(tronAdapter.send(account, { tx: TX }, { tronWeb })).resolves.toEqual({
+      txid: TXID,
+    })
+    expect(tronWeb.trx.getTransaction).toHaveBeenCalledWith(TXID)
+  })
+
+  test('throws when the node never learns the transaction', async () => {
+    const tronWeb = fakeTronWeb()
+    tronWeb.trx.getTransaction = vi.fn(async () => {
+      throw new Error('Transaction not found')
+    })
+    await expect(
+      tronAdapter.send(sender(), { tx: TX }, { tronWeb, confirmTimeoutMs: 0 })
+    ).rejects.toThrow(
+      new RegExp(`still does not know transaction ${TXID} 0ms after broadcasting it`)
+    )
+  })
+
+  test('keeps polling until the node answers', async () => {
+    const tronWeb = fakeTronWeb()
+    let calls = 0
+    tronWeb.trx.getTransaction = vi.fn(async (txid: string) => {
+      if (++calls < 3) throw new Error('Transaction not found')
+      return { txID: txid }
+    })
+    await expect(
+      tronAdapter.send(sender(), { tx: TX }, { tronWeb, confirmTimeoutMs: 5_000 })
+    ).resolves.toEqual({ txid: TXID })
+    expect(calls).toBe(3)
+  })
+
+  test('fails immediately when the account comes back without a hash', async () => {
+    const tronWeb = fakeTronWeb()
+    const account = sender({
+      sendTransaction: vi.fn(async () => ({}) as unknown as { hash: string }),
+    })
+    await expect(tronAdapter.send(account, { tx: TX }, { tronWeb })).rejects.toThrow(
+      /returned no transaction hash for the order call/
+    )
+    expect(tronWeb.trx.getTransaction).not.toHaveBeenCalled()
+  })
+
+  test('refuses to sign at all when the provider cannot confirm a broadcast', async () => {
+    const tronWeb = fakeTronWeb()
+    delete (tronWeb as { trx?: unknown }).trx
+    const account = sender()
+    await expect(tronAdapter.send(account, { tx: TX }, { tronWeb })).rejects.toThrow(
+      /exposes no trx.getTransaction/
+    )
+    expect(account.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  // tronweb raises on an empty `wallet/gettransactionbyid` body, but `trx.getTransaction` is
+  // structurally typed: a provider passed as config.tronWeb need not raise on anything.
+  test('a provider that resolves instead of raising on not-found does not confirm', async () => {
+    const tronWeb = fakeTronWeb()
+    tronWeb.trx.getTransaction = vi.fn(async () => ({}))
+    await expect(
+      tronAdapter.send(sender(), { tx: TX }, { tronWeb, confirmTimeoutMs: 0 })
+    ).rejects.toThrow(new RegExp(`still does not know transaction ${TXID}`))
+  })
+
+  test('a body for some other transaction does not confirm ours', async () => {
+    const tronWeb = fakeTronWeb()
+    const foreign = buildTronTx({ data: 'deadbeef' }).txID
+    tronWeb.trx.getTransaction = vi.fn(async () => ({ txID: foreign }))
+    await expect(
+      tronAdapter.send(sender(), { tx: TX }, { tronWeb, confirmTimeoutMs: 0 })
+    ).rejects.toThrow(new RegExp(`still does not know transaction ${TXID}`))
+  })
+
+  test('keeps polling past an empty body until the node answers with our transaction', async () => {
+    const tronWeb = fakeTronWeb()
+    let calls = 0
+    tronWeb.trx.getTransaction = vi.fn(async (txid: string) =>
+      ++calls < 3 ? {} : { txID: txid.toUpperCase() }
+    )
+    await expect(
+      tronAdapter.send(sender(), { tx: TX }, { tronWeb, confirmTimeoutMs: 5_000 })
+    ).resolves.toEqual({ txid: TXID })
+    expect(calls).toBe(3)
+  })
+
+  // `??` would let either through, and both make the deadline one that never passes.
+  test.each([NaN, Infinity, -1])(
+    'refuses a confirmTimeoutMs of %s before broadcasting anything',
+    async (confirmTimeoutMs) => {
+      const tronWeb = fakeTronWeb()
+      const account = sender()
+      await expect(
+        tronAdapter.send(account, { tx: TX }, { tronWeb, confirmTimeoutMs })
+      ).rejects.toThrow(/tronConfirmTimeoutMs is .* not a number of milliseconds/)
+      expect(account.sendTransaction).not.toHaveBeenCalled()
+      expect(tronWeb.trx.getTransaction).not.toHaveBeenCalled()
+    }
+  )
+
+  // The account broadcasts through its own provider, so that is the node that can answer.
+  test('reads the transaction back through the account provider, not the override', async () => {
+    const own = fakeTronWeb()
+    const override = fakeTronWeb()
+    await tronAdapter.send(sender({ _tronWeb: own }), { tx: TX }, { tronWeb: override })
+    expect(own.trx.getTransaction).toHaveBeenCalledWith(TXID)
+    expect(override.trx.getTransaction).not.toHaveBeenCalled()
+  })
+
+  test('falls back to the override when the account provider cannot confirm', async () => {
+    const own = fakeTronWeb()
+    delete (own as { trx?: unknown }).trx
+    const override = fakeTronWeb()
+    await tronAdapter.send(sender({ _tronWeb: own }), { tx: TX }, { tronWeb: override })
+    expect(override.trx.getTransaction).toHaveBeenCalledWith(TXID)
   })
 })
 
@@ -324,10 +467,10 @@ describe('tronAdapter.send rejects a node response that is not the requested cal
 
   test('a just-expired transaction is tolerated within the clock-skew allowance', async () => {
     const timestamp = Date.now() - 120_000
-    const tronWeb = hostileTronWeb(buildTronTx({ timestamp, expiration: timestamp + 60_000 }))
-    await expect(tronAdapter.send(sender(), { tx: TX }, { tronWeb })).resolves.toEqual({
-      txid: 't',
-    })
+    const tx = buildTronTx({ timestamp, expiration: timestamp + 60_000 })
+    await expect(
+      tronAdapter.send(sender(), { tx: TX }, { tronWeb: hostileTronWeb(tx) })
+    ).resolves.toEqual({ txid: tx.txID })
   })
 
   test('an expiration that precedes its own timestamp', async () => {
