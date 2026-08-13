@@ -110,19 +110,27 @@ function logSwidgeResult(txLabel: string, result: SwidgeResult): void {
   console.log(`fromTokenAmount="${String(result.fromTokenAmount)}"`)
 }
 
-async function assertTronBroadcast(hash: string): Promise<void> {
+interface TronTrx {
+  getTransaction(id: string): Promise<unknown>
+}
+
+function requireTronTrx(): TronTrx {
   const { _tronWeb: tronWeb } = tronAccount as unknown as {
-    _tronWeb?: { trx?: { getTransaction?(id: string): Promise<unknown> } }
+    _tronWeb?: { trx?: Partial<TronTrx> }
   }
-  const getTransaction = tronWeb?.trx?.getTransaction
-  if (typeof getTransaction !== 'function') {
+  if (typeof tronWeb?.trx?.getTransaction !== 'function') {
     fail('the Tron account has no tronweb provider, so the broadcast cannot be confirmed')
   }
+  return tronWeb.trx as TronTrx
+}
+
+async function assertTronBroadcast(hash: string): Promise<void> {
+  const trx = requireTronTrx()
   const deadline = Date.now() + 20_000
   let lastError: unknown
   for (;;) {
     try {
-      await getTransaction.call(tronWeb!.trx, hash)
+      await trx.getTransaction(hash)
       return
     } catch (err) {
       lastError = err
