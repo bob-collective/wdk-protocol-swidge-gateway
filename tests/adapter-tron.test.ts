@@ -302,6 +302,68 @@ describe('tronAdapter.send confirms the broadcast', () => {
     )
     expect(account.sendTransaction).not.toHaveBeenCalled()
   })
+
+  // tronweb raises on an empty `wallet/gettransactionbyid` body, but `trx.getTransaction` is
+  // structurally typed: a provider passed as config.tronWeb need not raise on anything.
+  test('a provider that resolves instead of raising on not-found does not confirm', async () => {
+    const tronWeb = fakeTronWeb()
+    tronWeb.trx.getTransaction = vi.fn(async () => ({}))
+    await expect(
+      tronAdapter.send(sender(), { tx: TX }, { tronWeb, confirmTimeoutMs: 0 })
+    ).rejects.toThrow(new RegExp(`still does not know transaction ${TXID}`))
+  })
+
+  test('a body for some other transaction does not confirm ours', async () => {
+    const tronWeb = fakeTronWeb()
+    const foreign = buildTronTx({ data: 'deadbeef' }).txID
+    tronWeb.trx.getTransaction = vi.fn(async () => ({ txID: foreign }))
+    await expect(
+      tronAdapter.send(sender(), { tx: TX }, { tronWeb, confirmTimeoutMs: 0 })
+    ).rejects.toThrow(new RegExp(`still does not know transaction ${TXID}`))
+  })
+
+  test('keeps polling past an empty body until the node answers with our transaction', async () => {
+    const tronWeb = fakeTronWeb()
+    let calls = 0
+    tronWeb.trx.getTransaction = vi.fn(async (txid: string) =>
+      ++calls < 3 ? {} : { txID: txid.toUpperCase() }
+    )
+    await expect(
+      tronAdapter.send(sender(), { tx: TX }, { tronWeb, confirmTimeoutMs: 5_000 })
+    ).resolves.toEqual({ txid: TXID })
+    expect(calls).toBe(3)
+  })
+
+  // `??` would let either through, and both make the deadline one that never passes.
+  test.each([NaN, Infinity, -1])(
+    'refuses a confirmTimeoutMs of %s before broadcasting anything',
+    async (confirmTimeoutMs) => {
+      const tronWeb = fakeTronWeb()
+      const account = sender()
+      await expect(
+        tronAdapter.send(account, { tx: TX }, { tronWeb, confirmTimeoutMs })
+      ).rejects.toThrow(/tronConfirmTimeoutMs is .* not a number of milliseconds/)
+      expect(account.sendTransaction).not.toHaveBeenCalled()
+      expect(tronWeb.trx.getTransaction).not.toHaveBeenCalled()
+    }
+  )
+
+  // The account broadcasts through its own provider, so that is the node that can answer.
+  test('reads the transaction back through the account provider, not the override', async () => {
+    const own = fakeTronWeb()
+    const override = fakeTronWeb()
+    await tronAdapter.send(sender({ _tronWeb: own }), { tx: TX }, { tronWeb: override })
+    expect(own.trx.getTransaction).toHaveBeenCalledWith(TXID)
+    expect(override.trx.getTransaction).not.toHaveBeenCalled()
+  })
+
+  test('falls back to the override when the account provider cannot confirm', async () => {
+    const own = fakeTronWeb()
+    delete (own as { trx?: unknown }).trx
+    const override = fakeTronWeb()
+    await tronAdapter.send(sender({ _tronWeb: own }), { tx: TX }, { tronWeb: override })
+    expect(override.trx.getTransaction).toHaveBeenCalledWith(TXID)
+  })
 })
 
 // The account signs `txID` alone and only checks that the owner is itself, so a node

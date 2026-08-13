@@ -124,21 +124,27 @@ function requireTronTrx(): TronTrx {
   return tronWeb.trx as TronTrx
 }
 
+function readsBackAs(res: unknown, hash: string): boolean {
+  const found = (res as { txID?: unknown } | null | undefined)?.txID
+  return typeof found === 'string' && found.toLowerCase() === hash.toLowerCase()
+}
+
 async function assertTronBroadcast(hash: string): Promise<void> {
   const trx = requireTronTrx()
   const deadline = Date.now() + 20_000
-  let lastError: unknown
+  let last: unknown
   for (;;) {
     try {
-      await trx.getTransaction(hash)
-      return
+      const res = await trx.getTransaction(hash)
+      if (readsBackAs(res, hash)) return
+      last = res
     } catch (err) {
-      lastError = err
+      last = err
     }
     if (Date.now() >= deadline) break
     await new Promise((resolve) => setTimeout(resolve, 1_500))
   }
-  console.error('Broadcast lookup failed with:', lastError)
+  console.error('Broadcast lookup answered with:', last)
   fail(`Tron node does not know tx ${hash} 20 s after broadcast — the node rejected it.`)
 }
 

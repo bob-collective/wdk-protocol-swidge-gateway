@@ -302,8 +302,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function resolveGetTransaction(tronWeb: TronWebLike): (txid: string) => Promise<unknown> {
-  const trx = tronWeb.trx
+
+function resolveGetTransaction(
+  account: TronAccount,
+  tronWeb: TronWebLike
+): (txid: string) => Promise<unknown> {
+  const own = account?._tronWeb?.trx
+  const trx = own && typeof own.getTransaction === 'function' ? own : tronWeb.trx
   if (!trx || typeof trx.getTransaction !== 'function') {
     throw new GatewaySwidgeError(
       ERR.NOT_SUPPORTED,
@@ -315,8 +320,26 @@ function resolveGetTransaction(tronWeb: TronWebLike): (txid: string) => Promise<
   return (txid) => trx.getTransaction(txid)
 }
 
+function resolveConfirmTimeout(timeoutMs: number | undefined): number {
+  if (timeoutMs == null) return BROADCAST_CONFIRM_TIMEOUT_MS
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new GatewaySwidgeError(
+      ERR.VALIDATION,
+      `config.tronConfirmTimeoutMs is ${timeoutMs}, which is not a number of milliseconds we ` +
+        'can wait for: pass a finite value of at least 0, or leave it unset for the ' +
+        `${BROADCAST_CONFIRM_TIMEOUT_MS}ms default`
+    )
+  }
+  return timeoutMs
+}
+
 function normalizeTxid(txid: string): string {
   return txid.replace(/^0x/i, '').toLowerCase()
+}
+
+function readsBackAs(res: unknown, txid: string): boolean {
+  const found = (res as { txID?: unknown } | null | undefined)?.txID
+  return typeof found === 'string' && normalizeTxid(found) === txid
 }
 
 async function assertBroadcast(
@@ -325,13 +348,14 @@ async function assertBroadcast(
   timeoutMs: number
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
-  let lastError: unknown
+  let last: unknown
   for (;;) {
     try {
-      await getTransaction(txid)
-      return
+      const res = await getTransaction(txid)
+      if (readsBackAs(res, txid)) return
+      last = res
     } catch (err) {
-      lastError = err
+      last = err
     }
     const remaining = deadline - Date.now()
     if (remaining <= 0) break
@@ -342,7 +366,7 @@ async function assertBroadcast(
     `the tron node still does not know transaction ${txid} ${timeoutMs}ms after broadcasting ` +
       'it, so the broadcast was rejected (an unactivated or unfunded sender is the usual ' +
       'cause). Check that txid on chain before sending the same transfer again',
-    { cause: lastError }
+    { cause: last }
   )
 }
 
@@ -400,7 +424,8 @@ export const tronAdapter = {
       throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, 'tron account cannot send transactions')
     }
     const tronWeb = await resolveTronWeb(account, opts)
-    const getTransaction = resolveGetTransaction(tronWeb)
+    const getTransaction = resolveGetTransaction(account, tronWeb)
+    const confirmTimeoutMs = resolveConfirmTimeout(opts.confirmTimeoutMs)
     const owner = await account.getAddress()
     const unsigned = await buildUnsignedTx(tronWeb, owner, payload.tx)
     const result = await account.sendTransaction(unsigned)
@@ -425,11 +450,7 @@ export const tronAdapter = {
         { cause: result }
       )
     }
-    await assertBroadcast(
-      getTransaction,
-      txid,
-      opts.confirmTimeoutMs ?? BROADCAST_CONFIRM_TIMEOUT_MS
-    )
+    await assertBroadcast(getTransaction, txid, confirmTimeoutMs)
     return { txid }
   },
 

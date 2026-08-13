@@ -207,8 +207,15 @@ and signed locally (case and any `0x` prefix aside); a node answering with some 
 existing txid is rejected instead of having that foreign hash registered. That txID is then
 read back through `trx.getTransaction`. A Tron node echoes the transaction's locally computed
 txID in its **rejection** body as well, and `WalletAccountTron.sendTransaction` returns that
-hash without reading the status — so a hash on its own does not mean anything was accepted. A
-provider that cannot answer `trx.getTransaction` is refused before anything is signed.
+hash without reading the status — so a hash on its own does not mean anything was accepted.
+
+The read-back only counts when the node answers with the transaction itself, carrying a
+matching `txID`; an empty body, or one describing some other txid, is retried until the
+timeout. It reads through the account's own provider — the one that broadcasts — and falls
+back to `config.tronWeb`/`config.tronProvider` only when the account carries none. A provider
+that cannot answer `trx.getTransaction` is refused before anything is signed, and so is a
+`config.tronConfirmTimeoutMs` that is not a finite, non-negative number of milliseconds
+(`NaN` or `Infinity` would make a deadline that never passes).
 
 ### Affiliate Fees
 
@@ -279,7 +286,7 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 | `config.ownerAddress`   | `string?`                                | EVM address recorded as the order's owner. Overrides the derived default (see below).                                                      |
 | `config.tronWeb`        | `object?`                                | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. Defaults to the account's own provider. |
 | `config.tronProvider`   | `string?`                                | Tron source routes only. Full-node URL to build a tronweb client from.                                                                     |
-| `config.tronConfirmTimeoutMs` | `number?`                          | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node (default `20000` ms).                        |
+| `config.tronConfirmTimeoutMs` | `number?`                          | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node — finite, `>= 0` (default `20000` ms).       |
 
 The gateway requires an `ownerAddress` on every route and validates it as an **Ethereum** address, so the module derives one: the `recipient` on an onramp (the source side is a bare BTC payment), the account's own address everywhere else. A Tron owner therefore goes on the wire in its `0x`-hex form — the same 20 bytes its Base58Check spelling encodes — while `sender`/`recipient` on the same request keep their native encoding. Set `config.ownerAddress` when the order should be owned by some other EVM account.
 
