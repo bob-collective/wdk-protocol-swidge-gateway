@@ -1,5 +1,7 @@
 # @gobob/wdk-protocol-swidge-gateway
 
+[![Built with WDK](https://raw.githubusercontent.com/tetherto/wdk-docs/refs/heads/main/public/assets/branding/wdk-badge-color-dark.svg)](https://docs.wdk.tether.io)
+
 Native BTC ⇄ token swaps and bridges for the Tether **Wallet Development Kit (WDK)** — powered by [BOB Gateway](https://gobob.xyz). Real BTC, no wrappers, no custodians; keys never leave the WDK account.
 
 ## 🔍 About WDK

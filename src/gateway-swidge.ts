@@ -76,6 +76,12 @@ export class GatewaySwidge extends SwidgeProtocol {
   private _tronOpts: TronOpts
   private _spenderCache: Map<string, string>
 
+  /**
+   * Create a BOB Gateway swidge protocol instance.
+   *
+   * @param account - WDK account used to sign and submit source-chain transactions.
+   * @param config - Gateway client, routing, fee, and chain configuration.
+   */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   constructor(account: any, config: GatewaySwidgeConfig = {}) {
     // @ts-expect-error: GatewaySwidgeConfig has extra fields not in SwidgeProtocolConfig;
@@ -159,6 +165,12 @@ export class GatewaySwidge extends SwidgeProtocol {
     return { params, variant, srcFamily, affiliateApplied, fromChain }
   }
 
+  /**
+   * Request a non-binding quote for a swap, bridge, or combined route.
+   *
+   * @param options - Source asset, destination asset, amount, chains, and recipient.
+   * @returns Quote containing expected output, price impact, and fees.
+   */
   async quoteSwidge(options: SwidgeOptions): Promise<SwidgeQuote> {
     const { params, affiliateApplied } = await this._buildQuoteParams(options)
     const gw = await this._client.getQuote(params)
@@ -169,6 +181,13 @@ export class GatewaySwidge extends SwidgeProtocol {
     }) as unknown as SwidgeQuote
   }
 
+  /**
+   * Quote and execute a swap, bridge, or combined route.
+   *
+   * @param options - Source asset, destination asset, amount, chains, and recipient.
+   * @param config - Per-execution settings, including an optional paymaster token.
+   * @returns Executed order ID, source transaction hash, amounts, and fees.
+   */
   async swidge(
     options: SwidgeOptions,
     config: Record<string, unknown> = {}
@@ -265,6 +284,9 @@ export class GatewaySwidge extends SwidgeProtocol {
    *
    * Returns a `SwidgeSimulation` describing the dry-run result, including validity and gas/fee
    * estimates. `broadcast` is always `false`.
+   *
+   * @param options - Source asset, destination asset, amount, chains, and recipient.
+   * @returns Dry-run result with route-specific validity and fee estimates.
    */
   async simulateSwidge(options: SwidgeOptions & { fromChain?: string }): Promise<SwidgeSimulation> {
     const { params, variant, srcFamily } = await this._buildQuoteParams(options)
@@ -313,17 +335,35 @@ export class GatewaySwidge extends SwidgeProtocol {
     }
   }
 
+  /**
+   * Fetch current status for a Gateway order.
+   *
+   * @param id - Gateway order ID returned by `swidge()`.
+   * @param _options - Optional WDK status query settings; currently unused.
+   * @returns Mapped WDK status and route transactions.
+   */
   async getSwidgeStatus(id: string, _options?: SwidgeStatusOptions): Promise<SwidgeStatusResult> {
     const order = await this._client.getOrder(id)
     return toSwidgeStatus(order as Parameters<typeof toSwidgeStatus>[0])
   }
 
+  /**
+   * Discover chains supported by current Gateway route matrix.
+   *
+   * @returns Supported source and destination chains.
+   */
   async getSupportedChains(): Promise<SwidgeSupportedChain[]> {
     return toSupportedChains(
       (await this._client.getRoutes()) as Parameters<typeof toSupportedChains>[0]
     )
   }
 
+  /**
+   * Discover tokens supported by current Gateway route matrix.
+   *
+   * @param options - Optional source-chain filter.
+   * @returns Supported tokens, optionally filtered by source chain.
+   */
   async getSupportedTokens(
     options?: SwidgeSupportedTokensOptions
   ): Promise<SwidgeSupportedToken[]> {
@@ -343,6 +383,9 @@ export class GatewaySwidge extends SwidgeProtocol {
    * NOTE: on a cache miss this creates a Gateway order to discover the spender contract address
    * (the V3 API exposes no read-only spender lookup); results are cached per route on this
    * instance, so call it once per route, not before every swap.
+   *
+   * @param options - Route and source-token amount requiring an allowance check.
+   * @returns Required token approval, or `null` when current allowance is sufficient or unnecessary.
    */
   async getRequiredApproval(
     options: SwidgeOptions & {
