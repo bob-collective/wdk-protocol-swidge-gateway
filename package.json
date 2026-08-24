@@ -50,6 +50,11 @@
       "@tetherto/wdk-wallet-tron>tronweb": "6.5.0"
     }
   },
+  "overrides": {
+    "@tetherto/wdk-wallet-tron": {
+      "tronweb": "$tronweb"
+    }
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
