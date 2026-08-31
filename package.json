@@ -1,6 +1,6 @@
 {
   "name": "@gobob/wdk-protocol-swidge-gateway",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Swap native BTC ⇄ USDT, USDC, ETH, wBTC, cbBTC, XAUT across Bitcoin, Ethereum, Base, Arbitrum, BSC, Tron & more — BOB Gateway swidge module for the Tether Wallet Development Kit (WDK).",
   "type": "module",
   "author": "BOB",
@@ -45,16 +45,6 @@
     "provenance": true
   },
   "packageManager": "pnpm@10.34.4",
-  "pnpm": {
-    "overrides": {
-      "@tetherto/wdk-wallet-tron>tronweb": "6.5.0"
-    }
-  },
-  "overrides": {
-    "@tetherto/wdk-wallet-tron": {
-      "tronweb": "$tronweb"
-    }
-  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -97,7 +87,7 @@
     "@tetherto/wdk-wallet-btc": "1.0.0-beta.11",
     "@tetherto/wdk-wallet-evm": "1.0.0-beta.15",
     "@tetherto/wdk-wallet-evm-erc-4337": "1.0.0-beta.11",
-    "@tetherto/wdk-wallet-tron": "1.0.0-beta.10",
+    "@tetherto/wdk-wallet-tron": "1.0.0-beta.13",
     "@typescript-eslint/eslint-plugin": "^8",
     "@typescript-eslint/parser": "^8",
     "eslint": "^9",
