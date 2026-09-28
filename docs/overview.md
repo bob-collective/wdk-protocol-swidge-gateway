@@ -2,7 +2,7 @@
 
 ## About
 
-`@gobob/wdk-protocol-swidge-gateway` is a WDK protocol module that adds cross-chain "swidge" capability (swap + bridge in a single operation) to any WDK wallet account. It is backed by the BOB Gateway V3 API.
+`@gobob/wdk-protocol-swidge-gateway` is a WDK protocol module that adds cross-chain "swidge" capability (swap + bridge in a single operation) to any WDK wallet account. It is backed by the BOB Gateway V4 API.
 
 A **swidge** converts an asset on one chain and delivers a different asset on another chain atomically from the user's perspective. The gateway handles routing, quoting, order creation, and settlement.
 

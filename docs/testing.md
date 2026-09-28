@@ -8,7 +8,7 @@
 | **Validation lane** (this doc) | `pnpm exec vitest run tests/integration`           | Quote conformance + sign/simulate (no broadcast) | Yes — seed must be funded |
 | Live swap (gateway-bot)        | gateway-bot full swap flow                         | End-to-end swap including broadcast              | Yes — full funded wallet  |
 
-The validation lane is the "everything short of the swap" layer: it hits the real Gateway V3 API for quotes, constructs real signed BTC transactions and EVM gas estimates, but **never broadcasts** and **never calls registerTx**.
+The validation lane is the "everything short of the swap" layer: it hits the real Gateway V4 API for quotes, constructs real signed BTC transactions and EVM gas estimates, but **never broadcasts** and **never calls registerTx**.
 
 ---
 

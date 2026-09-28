@@ -98,7 +98,7 @@ describe('toQuoteParams', () => {
       },
       {
         fromAddress: '0xfrom',
-        ownerAddress: '0xown',
+        refundAddress: '0xrefund',
         defaultSlippage: 0.03,
         affiliates: [{ address: '0xbob', bps: 10 }],
         variant: 'tokenSwap',
@@ -107,5 +107,36 @@ describe('toQuoteParams', () => {
     expect(p.affiliates).toBeUndefined()
     expect(p.slippage).toBe('300')
     expect(p.amount).toBe('1000')
+    expect(p.refundAddress).toBe('0xrefund')
+    expect(p).not.toHaveProperty('ownerAddress')
+  })
+
+  test('omits slippage when neither the call nor the config sets one', () => {
+    const p = toQuoteParams(
+      {
+        fromToken: 'BTC',
+        toToken: '0xtok',
+        fromChain: 'bitcoin',
+        toChain: 'base',
+        fromTokenAmount: 1n,
+      },
+      { variant: 'onramp' }
+    )
+    expect(p.slippage).toBeUndefined()
+  })
+
+  test('a per-call refundAddress wins over the context default', () => {
+    const p = toQuoteParams(
+      {
+        fromToken: 'BTC',
+        toToken: '0xtok',
+        fromChain: 'bitcoin',
+        toChain: 'base',
+        fromTokenAmount: 1n,
+        refundAddress: 'bc1qcall',
+      },
+      { variant: 'onramp', refundAddress: 'bc1qdefault' }
+    )
+    expect(p.refundAddress).toBe('bc1qcall')
   })
 })

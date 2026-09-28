@@ -26,6 +26,18 @@ function isTransient(err: unknown): boolean {
   return TRANSIENT.some((re) => re.test(msg))
 }
 
+/**
+ * Pull a readable message out of an error body. The V4 API answers `{ code, error, details? }`
+ * (`GatewayErrorV4`); `message` is kept for proxies and older error shapes.
+ */
+function errorMessage(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null
+  const { code, error, message } = body as { code?: unknown; error?: unknown; message?: unknown }
+  const text = typeof error === 'string' ? error : typeof message === 'string' ? message : null
+  if (text && typeof code === 'string') return `${code}: ${text}`
+  return text || (typeof code === 'string' ? code : null)
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -81,13 +93,10 @@ export class GatewayClient {
         throw err
       }
       if (status >= 200 && status < 300) return resBody
-      const msg =
-        (resBody && typeof resBody === 'object' && 'message' in resBody
-          ? String((resBody as { message: unknown }).message)
-          : null) || `HTTP ${status} for ${method} ${path}`
+      const msg = errorMessage(resBody) || `HTTP ${status} for ${method} ${path}`
       const gwErr = new GatewaySwidgeError(ERR.HTTP, msg, { status, cause: resBody })
       // Transient HTTP errors (429, 503, TRM screening, etc.) are retried.
-      // NOTE: retrying POST /v3/create-order on a transient error assumes the error occurred
+      // NOTE: retrying POST /v4/create-order on a transient error assumes the error occurred
       // before the order was created (the common case for 429/connect/timeout). A duplicate
       // order would be an unfulfilled orphan — consistent with how the gateway-cli retries
       // the whole flow.
@@ -100,24 +109,24 @@ export class GatewayClient {
   }
 
   getQuote(params: Record<string, string | undefined>): Promise<unknown> {
-    return this._call('GET', '/v3/get-quote', { query: params })
+    return this._call('GET', '/v4/get-quote', { query: params })
   }
   createOrder(quote: unknown): Promise<unknown> {
-    return this._call('POST', '/v3/create-order', { body: quote })
+    return this._call('POST', '/v4/create-order', { body: quote })
   }
   registerTx(body: unknown): Promise<unknown> {
-    return this._call('PATCH', '/v3/register-tx', { body })
+    return this._call('PATCH', '/v4/register-tx', { body })
   }
   getOrder(id: string): Promise<unknown> {
-    return this._call('GET', `/v3/get-order/${id}`)
+    return this._call('GET', `/v4/get-order/${id}`)
   }
   getOrders(addr: string, params?: Record<string, string | undefined>): Promise<unknown> {
-    return this._call('GET', `/v3/get-orders/${addr}`, { query: params })
+    return this._call('GET', `/v4/get-orders/${addr}`, { query: params })
   }
   getRoutes(): Promise<unknown> {
-    return this._call('GET', '/v3/get-routes')
+    return this._call('GET', '/v4/get-routes')
   }
   getMaxSpendable(addr: string): Promise<unknown> {
-    return this._call('GET', `/v3/get-max-spendable/${addr}`)
+    return this._call('GET', `/v4/get-max-spendable/${addr}`)
   }
 }
