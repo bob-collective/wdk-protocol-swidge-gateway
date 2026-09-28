@@ -1,4 +1,5 @@
 import { GatewaySwidgeError, ERR } from '../errors.js'
+import { MAX_UINT256 } from '../allowance-holder.js'
 
 const ZERO = '0x0000000000000000000000000000000000000000'
 
@@ -63,7 +64,7 @@ export const evmAdapter = {
     if (!tokenAddress || tokenAddress.toLowerCase() === ZERO) return null
     const allowance = await account.getAllowance!(tokenAddress, spender)
     if (BigInt(allowance) >= BigInt(amount)) return null
-    return { token: tokenAddress, spender, amount: BigInt(amount) }
+    return { token: tokenAddress, spender, amount: MAX_UINT256 }
   },
 
   /**

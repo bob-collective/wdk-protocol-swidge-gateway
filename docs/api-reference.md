@@ -30,24 +30,24 @@ new GatewaySwidge(account, config?)
 | Parameter               | Type                                    | Default             | Description                                                                                        |
 | ----------------------- | --------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
 | `account`               | `object`                                | —                   | WDK wallet account (BTC, EVM or Tron).                                                             |
-| `config.apiUrl`         | `string`                                | BOB Gateway V3      | Gateway API base URL.                                                                              |
+| `config.apiUrl`         | `string`                                | BOB Gateway mainnet | Gateway API base URL.                                                                              |
 | `config.bearerToken`    | `string`                                | BOB attribution key | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee).                           |
 | `config.http`           | `object`                                | —                   | Injectable HTTP transport (for tests).                                                             |
 | `config.affiliates`     | `Array<{address: string, bps: number}>` | —                   | Affiliate fee entries.                                                                             |
 | `config.paymasterToken` | `string`                                | —                   | ERC-20 paymaster token for AA accounts.                                                            |
-| `config.slippage`       | `number`                                | `0.03`              | Default slippage fraction (3%).                                                                    |
+| `config.slippage`       | `number`                                | gateway-resolved    | Default slippage fraction (e.g. `0.01` = 1%). Unset: omitted; the gateway picks one per route.     |
 | `config.feeRate`        | `number`                                | —                   | BTC fee rate in sat/vByte.                                                                         |
 | `config.fromChain`      | `string`                                | —                   | Source chain id. Required when not passed in `SwidgeOptions`.                                      |
-| `config.ownerAddress`   | `string`                                | derived             | EVM address recorded as the order's owner. Overrides the derived default (see below).              |
+| `config.refundAddress`  | `string`                                | account address     | Refund target, encoded for the **source** chain (see below).                                       |
 | `config.tronWeb`        | `object`                                | account's provider  | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. |
 | `config.tronProvider`   | `string`                                | —                   | Tron source routes only. Full-node URL to build a tronweb client from.                             |
 | `config.tronConfirmTimeoutMs` | `number`                          | `20000`             | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node; finite and `>= 0`. |
 
-The gateway requires an `ownerAddress` on every route and validates it as an **Ethereum** address, so the module derives one: the `recipient` on an onramp (the source side is a bare BTC payment), the account's own address everywhere else. A Tron address is Base58Check over `0x41 || hash160(pubkey)` — the same 20 bytes an EVM address holds — so a Tron owner is sent in its `0x`-hex form while `sender`/`recipient` on the same request keep their native encoding. Set `config.ownerAddress` when the order should be owned by some other EVM account.
+Gateway V4 requires a `refundAddress` on every route before it creates an order — create-order answers `MISSING_REFUND_ADDRESS` otherwise — and it is encoded for the **source** chain: a Bitcoin address on an onramp, the EVM `0x…` or Tron Base58Check sender on an offramp or token swap. Precedence is `options.refundAddress` → `config.refundAddress` → the account's own address (the wallet the funds leave from). It goes on the wire as-is; unlike V3's EVM-only `ownerAddress` (removed in V4), a Tron address is not converted. `swidge()`, `simulateSwidge()` and `getRequiredApproval()` refuse to create an order when none can be resolved.
 
 Both Tron options only select the node that **builds** the order call and reads allowances. Broadcasting always goes through the account, so a `WalletAccountTron` must be connected to a provider of its own regardless — neither option substitutes for that.
 
-Pass a real tronweb instance to `config.tronWeb`. The module relies on tronweb re-deriving the response's `raw_data_hex`/`txID` from the locally requested call; on top of that it re-checks the built transaction itself (contract type, owner, target, calldata, call value, fee limit, hash binding and expiration window) before the account signs it. It also requires the hash the account reports back to equal the signed transaction's own `txID` (case and any `0x` prefix aside), so a node answering with a different existing txid cannot get that hash registered, and then reads that txID back through `trx.getTransaction` — a Tron node echoes the txID in its **rejection** body too, and `WalletAccountTron.sendTransaction` returns that hash without reading the status, so the hash alone does not mean the transaction was accepted. The read-back counts only when the node answers with the transaction itself, carrying a matching `txID`: an empty body, or one describing some other txid, is treated as still-unknown and retried until the timeout — `trx.getTransaction` is structurally typed, so nothing makes a caller's provider raise on not-found the way tronweb's own does. And because the account broadcasts through its own provider, the read-back goes through that provider too, falling back to `config.tronWeb`/`config.tronProvider` only when the account carries none: polling the build node for a transaction it never saw would fail a broadcast the broadcasting node had accepted. A provider without `trx.getTransaction` is refused before anything is signed, as is a `config.tronConfirmTimeoutMs` that is not a finite, non-negative number of milliseconds — `NaN` or `Infinity` would make a deadline that never passes.
+Pass a real tronweb instance to `config.tronWeb`. The module relies on tronweb re-deriving the response's `raw_data_hex`/`txID` from the locally requested call; on top of that it re-checks the built transaction itself (contract type, owner, target, calldata, call value, fee limit, hash binding and expiration window) before the account signs it. It also requires the hash the account reports back to equal the signed transaction's own `txID` (case and any `0x` prefix aside), so a node answering with a different existing txid cannot get that hash returned, and then reads that txID back through `trx.getTransaction` — a Tron node echoes the txID in its **rejection** body too, and `WalletAccountTron.sendTransaction` returns that hash without reading the status, so the hash alone does not mean the transaction was accepted. The read-back counts only when the node answers with the transaction itself, carrying a matching `txID`: an empty body, or one describing some other txid, is treated as still-unknown and retried until the timeout — `trx.getTransaction` is structurally typed, so nothing makes a caller's provider raise on not-found the way tronweb's own does. And because the account broadcasts through its own provider, the read-back goes through that provider too, falling back to `config.tronWeb`/`config.tronProvider` only when the account carries none: polling the build node for a transaction it never saw would fail a broadcast the broadcasting node had accepted. A provider without `trx.getTransaction` is refused before anything is signed, as is a `config.tronConfirmTimeoutMs` that is not a finite, non-negative number of milliseconds — `NaN` or `Infinity` would make a deadline that never passes.
 
 ### `SwidgeOptions`
 
@@ -60,15 +60,8 @@ Passed to `quoteSwidge()`, `swidge()`, and `getRequiredApproval()`.
 | `toChain`         | `string` | Yes      | Destination chain id (e.g. `'base'`, `'bitcoin'`, `'tron'`).                                                                                                                                           |
 | `recipient`       | `string` | Yes      | Recipient address on the destination chain.                                                                                                                                                            |
 | `fromTokenAmount` | `bigint` | Yes      | Amount to send in the token's smallest unit (satoshis for BTC).                                                                                                                                        |
-| `refundAddress`   | `string` | No       | Bitcoin refund address for an onramp. Forwarded to get-quote, which currently ignores it — see below.                                                                                                   |
-| `slippage`        | `number` | No       | Per-call slippage override. Overrides `config.slippage`.                                                                                                                                               |
-
-`refundAddress` does **not** choose where a failed order is refunded, on any route. The V3 API takes it as "optional refund bitcoin address to be used in a bitcoin onramp request" and does not yet read it (`refund_address` is `dead_code` in the gateway's `GetQuoteParamsV3`), and no quote field carries it — so `swidge()`, which posts the quote back verbatim to create-order, cannot forward it either. The refund targets the gateway does honour are derived server-side:
-
-- **Onramp** — the EVM refund claimant is the order's owner, i.e. `config.ownerAddress` (defaulting to `recipient`), which the API documents as the "EVM owner / refund address".
-- **Offramp and token swap** — the source-chain sender. On a Tron offramp that is the LayerZero OFT `_refundAddress`, filled with `sender`'s 20 bytes; on the Bungee routes it is `refund_address: user_address`. Neither is caller-supplied.
-
-Pass `refundAddress` on a BTC onramp if you want it honoured the day the gateway wires it up; treat it as inert everywhere else.
+| `refundAddress`   | `string` | No       | Source-chain refund address. Overrides `config.refundAddress` and the account-address default.                                                                                                         |
+| `slippage`        | `number` | No       | Per-call slippage override. Overrides `config.slippage`. Unset on both: the gateway resolves it per route.                                                                                             |
 
 ### Methods
 
@@ -78,7 +71,7 @@ Returns a quote without submitting any transaction. Use to show expected output 
 
 #### `swidge(options: SwidgeOptions) → Promise<SwidgeResult>`
 
-Executes a swidge. Internally: fetches a quote, creates an order, sends the source transaction, and registers the hash with the gateway.
+Executes a swidge. Internally: fetches a quote, creates an order, then either hands the signed BTC transaction to the gateway's register-tx for broadcast (onramp — a register-tx failure throws; check the chain before resending, the tx may still have gone out) or broadcasts the EVM/Tron source transaction from the account (offramp/token swap — the gateway indexes it from chain; V4 has no register-tx for these).
 
 **Returns `SwidgeResult`:**
 
@@ -111,13 +104,15 @@ Returns supported tokens. Pass `options` to filter by chain or other criteria.
 
 #### `getRequiredApproval(options: SwidgeOptions) → Promise<{ token: string, spender: string, amount: bigint } | null>`
 
-Computes the ERC-20/TRC-20 approval that must be granted before calling `swidge()` for offramp or token-swap routes. Returns `null` for onramp routes (BTC source — no token approval needed).
+Computes the ERC-20/TRC-20 approval that must be granted before calling `swidge()` for offramp or token-swap routes. Returns `null` for onramp routes (BTC source — no token approval needed) and when the current allowance already covers `fromTokenAmount`.
+
+The approval is **unbounded** (`amount` is `2^256 - 1`), as Gateway V4 and `@gobob/bob-sdk` grant it, so one approval covers later orders on the same route. Because an unbounded allowance puts the whole token balance behind the spender, the spender is checked against a hardcoded table of the Gateway's AllowanceHolder contracts per source chain (0x's canonical `0x0000000000001fF3684f28c67538d4D072C22734` on most EVM chains, Gateway's own on BOB and Tron) — never trusted from the create-order response. An unknown chain or a mismatched spender throws `VALIDATION_ERROR` instead of returning an approval; `simulateSwidge()` applies the same check to the approval it reports.
 
 | Return field | Type     | Description                             |
 | ------------ | -------- | --------------------------------------- |
 | `token`      | `string` | ERC-20/TRC-20 token address to approve. |
-| `spender`    | `string` | Spender address (gateway contract).     |
-| `amount`     | `bigint` | Exact amount to approve.                |
+| `spender`    | `string` | Gateway AllowanceHolder for the source chain. |
+| `amount`     | `bigint` | `2^256 - 1` — unbounded approval.       |
 
 On Tron the allowance is read with a constant-contract call through the resolved provider (`WalletAccountTron` has no allowance getter).
 
@@ -149,7 +144,7 @@ Affiliate fees are **not** applied on EVM↔EVM routes (dropped gracefully; `aff
 
 ## `GatewayClient`
 
-Low-level HTTP client for the BOB Gateway V3 API. Instantiated automatically by `GatewaySwidge`. Expose it only when you need raw API access.
+Low-level HTTP client for the BOB Gateway V4 API. Instantiated automatically by `GatewaySwidge`. Expose it only when you need raw API access.
 
 ## `GatewaySwidgeError` / `ERR`
 

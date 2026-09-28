@@ -10,6 +10,7 @@ import { describe, test, expect, vi } from 'vitest'
 import { Transaction, address as btcAddress, networks } from 'bitcoinjs-lib'
 import { bitcoinAdapter } from '../src/chain-adapters/bitcoin.js'
 import { evmAdapter } from '../src/chain-adapters/evm.js'
+import { MAX_UINT256 } from '../src/allowance-holder.js'
 import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
 import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
@@ -52,7 +53,10 @@ function fakeEvmClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
       offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, fees: {} },
     })),
     createOrder: vi.fn(async () => ({
-      offramp: { order_id: 'sim-order-evm', tx: { to: '0xspender', data: '0xdata', value: '0' } },
+      offramp: {
+        order_id: 'sim-order-evm',
+        tx: { to: '0x0000000000001fF3684f28c67538d4D072C22734', data: '0xdata', value: '0' },
+      },
     })),
     registerTx: vi.fn(async () => ({})),
     getOrder: vi.fn(async () => ({ status: { success: { received_tokens: [] } } })),
@@ -183,7 +187,11 @@ describe('evmAdapter.simulate()', () => {
     expect(result.valid).toBe(false)
     expect(result.gasEstimate).toBeNull()
     expect(result.reason).toContain('insufficient allowance')
-    expect(result.requiredApproval).toEqual({ token: '0xtok', spender: '0xspender', amount: 1000n })
+    expect(result.requiredApproval).toEqual({
+      token: '0xtok',
+      spender: '0xspender',
+      amount: MAX_UINT256,
+    })
     expect(account.sendTransaction).not.toHaveBeenCalled()
   })
 
@@ -200,7 +208,11 @@ describe('evmAdapter.simulate()', () => {
       amount: 1000n,
     })
     expect(result.valid).toBe(true)
-    expect(result.requiredApproval).toEqual({ token: '0xtok', spender: '0xspender', amount: 1000n })
+    expect(result.requiredApproval).toEqual({
+      token: '0xtok',
+      spender: '0xspender',
+      amount: MAX_UINT256,
+    })
   })
 
   test('valid: false when the allowance read itself fails, no rethrow', async () => {
@@ -318,8 +330,8 @@ describe('GatewaySwidge.simulateSwidge()', () => {
       expect(result.evm.reason).toBeTruthy()
       expect(result.evm.requiredApproval).toEqual({
         token: '0xtok',
-        spender: '0xspender',
-        amount: 1000n,
+        spender: '0x0000000000001fF3684f28c67538d4D072C22734',
+        amount: MAX_UINT256,
       })
     }
     expect(account.sendTransaction).not.toHaveBeenCalled()
@@ -373,7 +385,7 @@ describe('GatewaySwidge.simulateSwidge()', () => {
       expect(result.tron.requiredApproval).toEqual({
         token: USDT_TRON,
         spender: REGISTRY,
-        amount: 1_000_000n,
+        amount: MAX_UINT256,
       })
     }
     expect(account.quoteSendTransaction).toHaveBeenCalled()

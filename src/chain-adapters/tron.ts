@@ -1,4 +1,5 @@
 import { GatewaySwidgeError, ERR } from '../errors.js'
+import { MAX_UINT256 } from '../allowance-holder.js'
 
 const APPROVE_SELECTOR = 'approve(address,uint256)'
 const ALLOWANCE_SELECTOR = 'allowance(address,address)'
@@ -302,7 +303,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-
 function resolveGetTransaction(
   account: TronAccount,
   tronWeb: TronWebLike
@@ -412,7 +412,7 @@ export const tronAdapter = {
     }
     const required = BigInt(amount)
     if (BigInt(`0x${word}`) >= required) return null
-    return { token: tokenAddress, spender, amount: required }
+    return { token: tokenAddress, spender, amount: MAX_UINT256 }
   },
 
   async send(
@@ -445,7 +445,7 @@ export const tronAdapter = {
       throw new GatewaySwidgeError(
         ERR.HTTP,
         `the tron account broadcast returned hash ${hash}, but the transaction we built and ` +
-          `signed is ${unsigned.txID}, so that hash is not ours and must not be registered. ` +
+          `signed is ${unsigned.txID}, so that hash is not ours and must not be returned. ` +
           'Check both txids on chain before sending the same transfer again',
         { cause: result }
       )

@@ -1,5 +1,6 @@
-// V3 request/response shapes used by this module. Mirrors bob-gateway crates/gateway-api models.
-// (Hand-written: the V3 OpenAPI components(schemas()) are not reliably emitted — see spec §10.6.)
+// V4 request/response shapes used by this module. Mirrors bob-gateway crates/gateway-api models.
+// V4 keeps the V3 order models (`GatewayCreateOrderV3`, `GatewayOrderInfoV3`), hence their names.
+// (Hand-written: the OpenAPI components(schemas()) are not reliably emitted — see spec §10.6.)
 
 import type { BtcSimulateResult } from './chain-adapters/bitcoin.js'
 import type { EvmSimulateResult } from './chain-adapters/evm.js'
@@ -21,19 +22,24 @@ export type SwidgeSimulation = {
   broadcast: false
 } & ({ onramp: BtcSimulateResult } | { evm: EvmSimulateResult } | { tron: TronSimulateResult })
 
-export interface GetQuoteParamsV3 {
+export interface GetQuoteParamsV4 {
   srcChain: string
   dstChain: string
   srcToken: string
   dstToken: string
   amount: string
-  slippage: string
+  /** Basis points. Optional in V4: omitted, the gateway picks one per route and echoes it. */
+  slippage?: string
   sender?: string
   recipient: string
-  ownerAddress?: string
+  /** Source-chain encoded. Optional for a price-only quote; create-order rejects a quote without it. */
   refundAddress?: string
   affiliates?: string
-  gasRefill?: string
+}
+
+/** V4 register-tx body: onramp only, signed raw Bitcoin tx hex only (the gateway broadcasts it). */
+export interface RegisterTxV4 {
+  onramp: { order_id: string; bitcoin_tx_hex: string }
 }
 
 // Discriminated by the present key

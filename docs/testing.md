@@ -8,7 +8,7 @@
 | **Validation lane** (this doc) | `pnpm exec vitest run tests/integration`           | Quote conformance + sign/simulate (no broadcast) | Yes — seed must be funded |
 | Live swap (gateway-bot)        | gateway-bot full swap flow                         | End-to-end swap including broadcast              | Yes — full funded wallet  |
 
-The validation lane is the "everything short of the swap" layer: it hits the real Gateway V3 API for quotes, constructs real signed BTC transactions and EVM gas estimates, but **never broadcasts** and **never calls registerTx**.
+The validation lane is the "everything short of the swap" layer: it hits the real Gateway V4 API for quotes, constructs real signed BTC transactions and EVM gas estimates, but **never broadcasts** and **never calls registerTx**.
 
 ---
 
@@ -63,7 +63,7 @@ Fund them:
 
 - **BTC address** — send at least 30 000 sats (~0.0003 BTC) to cover the `AMOUNT_SATS` default plus fees. This fits a ~$50 test wallet; bump `AMOUNT_SATS` if you funded more.
 - **EVM address** — send at least 50 USDT (`AMOUNT_USDT` default = 50 000 000 in 6-decimal units) and a small amount of ETH for gas estimation (≥ 0.001 ETH).
-- **Tron address** (`T…`, BIP-44 `m/44'/195'`) — only needed for the Tron offramp legs. Send at least 50 USDT-TRC20 plus ~30 TRX so the approve and offramp calls have energy/bandwidth headroom. The Tron node defaults to `https://tron.api.pocket.network`; override with `TRON_RPC_URL` (a dedicated endpoint avoids shared-IP rate limits in CI).
+- **Tron address** (`T…`, BIP-44 `m/44'/195'`) — only needed for the Tron offramp legs. Send at least 50 USDT-TRC20 plus ~30 TRX so the approve and offramp calls have energy/bandwidth headroom. The Tron node defaults to `https://tron-rpc.publicnode.com`; override with `TRON_RPC_URL` (a dedicated endpoint avoids shared-IP rate limits in CI).
 
 ---
 

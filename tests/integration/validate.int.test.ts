@@ -13,12 +13,15 @@
  * Environment variables:
  *   TEST_SEED       — BIP-39 mnemonic (required)
  *   EVM_RPC_URL     — JSON-RPC endpoint for Ethereum (default: https://ethereum-rpc.publicnode.com)
- *   TRON_RPC_URL    — Tron full-node endpoint (default: https://tron.api.pocket.network)
+ *   TRON_RPC_URL    — Tron full-node endpoint (default: https://tron-rpc.publicnode.com)
  *   AMOUNT_SATS     — BTC onramp amount in satoshis (default: 30000, ~$30 — fits a $50 test wallet with fee headroom)
  *   AMOUNT_USDT     — USDT offramp amount in smallest unit (default: 50000000 = 50 USDT)
  */
 
 import { describe, test, expect } from 'vitest'
+import type { WalletAccountBtc } from '@tetherto/wdk-wallet-btc'
+import type { WalletAccountEvm } from '@tetherto/wdk-wallet-evm'
+import type { WalletAccountTron } from '@tetherto/wdk-wallet-tron'
 
 const RUN = !!process.env.TEST_SEED
 
@@ -32,7 +35,7 @@ const RUN = !!process.env.TEST_SEED
     const USDT_TRON = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
     const BTC_ZERO = '0x0000000000000000000000000000000000000000'
     const EVM_RPC = process.env.EVM_RPC_URL ?? 'https://ethereum-rpc.publicnode.com'
-    const TRON_RPC = process.env.TRON_RPC_URL ?? 'https://tron.api.pocket.network'
+    const TRON_RPC = process.env.TRON_RPC_URL ?? 'https://tron-rpc.publicnode.com'
     const AMOUNT_SATS = BigInt(process.env.AMOUNT_SATS ?? '30000')
     const AMOUNT_USDT = BigInt(process.env.AMOUNT_USDT ?? '50000000')
 
@@ -40,12 +43,9 @@ const RUN = !!process.env.TEST_SEED
     let btcAddress: string
     let evmAddress: string
     let tronAddress: string
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let btcAccount: any
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let evmAccount: any
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let tronAccount: any
+    let btcAccount: WalletAccountBtc
+    let evmAccount: WalletAccountEvm
+    let tronAccount: WalletAccountTron
 
     // Shared setup: derive accounts from the seed once before all tests.
     // We do this inside a test rather than beforeAll so that import errors surface

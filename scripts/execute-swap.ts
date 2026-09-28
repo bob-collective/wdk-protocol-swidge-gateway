@@ -9,7 +9,7 @@
  *
  * Optional env:
  *   EVM_RPC_URL  — Ethereum JSON-RPC URL (default: https://ethereum-rpc.publicnode.com)
- *   TRON_RPC_URL — Tron full-node URL (default: https://tron.api.pocket.network)
+ *   TRON_RPC_URL — Tron full-node URL (default: https://tron-rpc.publicnode.com)
  *   PHASE        — onramp | tron-onramp | offramp | tron-offramp | status
  *   AMOUNT       — integer string: sats for either onramp, USDT 6-decimal units for either offramp
  *   ORDER_ID     — gateway order ID (required for status phase)
@@ -22,7 +22,7 @@
 
 const TEST_SEED = process.env.TEST_SEED
 const EVM_RPC_URL = process.env.EVM_RPC_URL ?? 'https://ethereum-rpc.publicnode.com'
-const TRON_RPC_URL = process.env.TRON_RPC_URL ?? 'https://tron.api.pocket.network'
+const TRON_RPC_URL = process.env.TRON_RPC_URL ?? 'https://tron-rpc.publicnode.com'
 const PHASE = process.env.PHASE
 const AMOUNT = process.env.AMOUNT
 const ORDER_ID = process.env.ORDER_ID
@@ -239,8 +239,9 @@ switch (PHASE) {
         await waitForApproval(async () => {
           const allowance = await evmAccount.getAllowance(approval.token, approval.spender)
           return {
-            done: allowance >= approval.amount,
-            detail: `allowance=${String(allowance)}  required=${String(approval.amount)}`,
+            // The approval is unbounded; the swap only needs fromTokenAmount of it.
+            done: allowance >= BigInt(fromTokenAmount),
+            detail: `allowance=${String(allowance)}  required=${String(fromTokenAmount)}`,
           }
         })
       }

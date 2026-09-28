@@ -9,7 +9,7 @@ const TRON_TXID = buildTronTx({ data: 'feed', feeLimit: 100_000_000 }).txID
 
 function makeMockHttp() {
   return {
-    request: vi.fn(async (_method: string, url: string) => {
+    request: vi.fn(async (_method: string, url: string, opts?: { body?: unknown }) => {
       if (url.includes('get-quote')) {
         return {
           status: 200,
@@ -29,7 +29,8 @@ function makeMockHttp() {
         }
       }
       if (url.includes('register-tx')) {
-        return { status: 200, body: {} }
+        const hex = (opts?.body as { onramp: { bitcoin_tx_hex: string } }).onramp.bitcoin_tx_hex
+        return { status: 200, body: { onramp: { txid: Transaction.fromHex(hex).getId() } } }
       }
       if (url.includes('get-order')) {
         return { status: 200, body: { status: { success: { received_tokens: [] } } } }
@@ -155,7 +156,7 @@ describe('examples smoke', () => {
       functionSelector: 'approve(address,uint256)',
       parameters: [
         { type: 'address', value: REGISTRY },
-        { type: 'uint256', value: '1000000' },
+        { type: 'uint256', value: String((1n << 256n) - 1n) },
       ],
     })
     expect(account.sendTransaction.mock.calls[1][0]).toMatchObject({
