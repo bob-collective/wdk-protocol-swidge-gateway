@@ -1,4 +1,5 @@
 import { describe, test, expect, vi } from 'vitest'
+import { MAX_UINT256 } from '../src/allowance-holder.js'
 import { tronAdapter, buildTronApproval } from '../src/chain-adapters/tron.js'
 import type { TronWebLike } from '../src/chain-adapters/tron.js'
 import { buildTronTx, OWNER, REGISTRY, USDT, SPENDER } from './fixtures/tron.js'
@@ -554,7 +555,7 @@ describe('tronAdapter.getRequiredApproval', () => {
       ],
       OWNER
     )
-    expect(out).toEqual({ token: USDT, spender: SPENDER, amount: 500n })
+    expect(out).toEqual({ token: USDT, spender: SPENDER, amount: MAX_UINT256 })
   })
 
   test('returns null when the allowance already covers the amount', async () => {
@@ -664,7 +665,7 @@ describe('tronAdapter.simulate', () => {
     expect(out.requiredApproval).toEqual({
       token: USDT,
       spender: REGISTRY,
-      amount: 500n,
+      amount: MAX_UINT256,
     })
     expect(out.feeEstimate).toBeNull()
   })

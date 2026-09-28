@@ -1,4 +1,5 @@
 import { GatewaySwidgeError, ERR } from '../errors.js'
+import { MAX_UINT256 } from '../allowance-holder.js'
 
 const ZERO = '0x0000000000000000000000000000000000000000'
 
@@ -49,7 +50,9 @@ export const evmAdapter = {
   family: 'evm' as const,
 
   /**
-   * Return the approval needed before `send`, or null if none required.
+   * Return the approval needed before `send`, or null if none required. The approval is
+   * unbounded (`MAX_UINT256`, as Gateway V4 and bob-sdk grant it); `amount` only decides
+   * whether the current allowance already covers this order.
    * Returns null when:
    *   - tokenAddress is falsy or the zero address (native asset), or
    *   - existing allowance already covers `amount`.
@@ -63,7 +66,7 @@ export const evmAdapter = {
     if (!tokenAddress || tokenAddress.toLowerCase() === ZERO) return null
     const allowance = await account.getAllowance!(tokenAddress, spender)
     if (BigInt(allowance) >= BigInt(amount)) return null
-    return { token: tokenAddress, spender, amount: BigInt(amount) }
+    return { token: tokenAddress, spender, amount: MAX_UINT256 }
   },
 
   /**

@@ -338,7 +338,9 @@ Returns supported tokens, optionally filtered by `options`.
 
 #### `getRequiredApproval(options) → Promise<{ token: string, spender: string, amount: bigint } | null>`
 
-Returns the ERC-20/TRC-20 approval the caller must grant before executing an offramp or token-swap swidge. Returns `null` for onramp routes (native asset, no approval needed).
+Returns the ERC-20/TRC-20 approval the caller must grant before executing an offramp or token-swap swidge. Returns `null` for onramp routes (native asset, no approval needed), and when the current allowance already covers `fromTokenAmount`.
+
+The approval is **unbounded** (`amount` is `2^256 - 1`), as Gateway V4 and `@gobob/bob-sdk` grant it, so one approval covers later orders on the same route. Because an unbounded allowance puts the whole token balance behind the spender, the spender is checked against a hardcoded table of the Gateway's AllowanceHolder contracts per source chain (0x's canonical `0x0000000000001fF3684f28c67538d4D072C22734` on most EVM chains, Gateway's own on BOB and Tron) — never trusted from the create-order response. An unknown chain or a mismatched spender throws `VALIDATION_ERROR` instead of returning an approval; `simulateSwidge()` applies the same check to the approval it reports.
 
 On Tron the allowance is read with a constant-contract call through the resolved provider, since `WalletAccountTron` exposes no allowance getter. Feed the result to `buildTronApproval()` to get a call descriptor `WalletAccountTron.sendTransaction` accepts.
 
@@ -359,9 +361,9 @@ On Tron the allowance is read with a constant-contract call through the resolved
 
 ## Known Limitations & Integration Notes
 
-- **USDT (Ethereum) approval reset:** Before an offramp of USDT-on-Ethereum, the WDK account's `approve()` throws if a non-zero allowance is already set — USDT's non-standard `approve` reverts when changing from a non-zero value. You must send `approve({ token, spender, amount: 0n })` first to reset to zero, then approve the real amount. (The underlying transaction itself is a plain ERC-20 call, so WDK's signing path is fine.)
+- **USDT (Ethereum) approval reset:** Before an offramp of USDT-on-Ethereum, the WDK account's `approve()` throws if a non-zero allowance is already set — USDT's non-standard `approve` reverts when changing from a non-zero value. You must send `approve({ token, spender, amount: 0n })` first to reset to zero, then approve the returned amount. With unbounded approvals this only comes up when an older, exact allowance is still in place. (The underlying transaction itself is a plain ERC-20 call, so WDK's signing path is fine.)
 
-- **Approval pre-flight (`getRequiredApproval`) is a simple allowance check:** It returns an approval whenever `allowance < amount`. Some OFT-style receiver contracts do not require an ERC-20 approval at all; for those, approving anyway is harmless (the gateway contract ignores the allowance). The `@gobob/bob-sdk` additionally probes the receiver's `approvalRequired()` method; this module does not — it relies on the gateway to route the transaction correctly.
+- **Approval pre-flight (`getRequiredApproval`) is a simple allowance check:** It returns an approval whenever `allowance < fromTokenAmount`. Some OFT-style receiver contracts do not require an ERC-20 approval at all; for those, approving anyway is harmless (the gateway contract ignores the allowance). The `@gobob/bob-sdk` additionally probes the receiver's `approvalRequired()` method; this module does not — it relies on the gateway to route the transaction correctly.
 
 - **Only onramps call register-tx:** In V4 register-tx is onramp-only and _is_ the broadcast — the module hands the gateway the signed raw BTC tx hex, the gateway validates, screens and submits it, and the client never broadcasts it itself. A register-tx failure therefore throws (nothing was sent) instead of returning a txid. Offramp and token-swap source transactions are broadcast by the WDK account and indexed by the gateway from chain; there is nothing to register. On a Tron source route the hash is first read back from the node (see above), because a Tron txid exists before the transaction does; that read-back waits for acceptance, never for mining.
 
@@ -375,7 +377,7 @@ On Tron the allowance is read with a constant-contract call through the resolved
 
 - **Keys never leave the WDK account.** All signing is delegated to the account abstraction layer — `GatewaySwidge` never has direct key access.
 - **No external wallet dependencies.** This package does not depend on `viem`, `@gobob/bob-sdk`, or any other wallet library.
-- **Approval hygiene.** For offramp/tokenSwap routes, call `getRequiredApproval()` first and approve only the exact required amount. Do not pre-approve unlimited amounts.
+- **Approval hygiene.** For offramp/tokenSwap routes, call `getRequiredApproval()` first and approve exactly what it returns — an unbounded allowance to the Gateway's AllowanceHolder, whose address the module pins per chain. Don't approve any other spender; revoke the allowance if you stop using the Gateway.
 - **BOB attribution key.** The default `bearerToken` is a shared gateway-wdk attribution token that attributes volume to BOB at 0 cost. Replace it with your own key only if you have a direct API agreement.
 
 ## 🛠️ Development

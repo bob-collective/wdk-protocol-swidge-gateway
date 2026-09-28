@@ -4,7 +4,8 @@ import { utils } from 'tronweb'
 
 // Real mainnet addresses — `toHex` rejects made-up Base58, and the adapter converts.
 export const OWNER = 'TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR'
-export const REGISTRY = 'TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax'
+// The gateway's Tron AllowanceHolder — the order call target, and the approval spender.
+export const REGISTRY = 'TAfbit1ENsRmtZbPQfYU3srURpfYuWYS7K'
 export const USDT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
 export const SPENDER = 'TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7'
 

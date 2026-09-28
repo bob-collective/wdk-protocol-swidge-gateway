@@ -155,7 +155,7 @@ describe('examples smoke', () => {
       functionSelector: 'approve(address,uint256)',
       parameters: [
         { type: 'address', value: REGISTRY },
-        { type: 'uint256', value: '1000000' },
+        { type: 'uint256', value: String((1n << 256n) - 1n) },
       ],
     })
     expect(account.sendTransaction.mock.calls[1][0]).toMatchObject({

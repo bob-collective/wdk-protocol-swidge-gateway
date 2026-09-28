@@ -104,13 +104,15 @@ Returns supported tokens. Pass `options` to filter by chain or other criteria.
 
 #### `getRequiredApproval(options: SwidgeOptions) → Promise<{ token: string, spender: string, amount: bigint } | null>`
 
-Computes the ERC-20/TRC-20 approval that must be granted before calling `swidge()` for offramp or token-swap routes. Returns `null` for onramp routes (BTC source — no token approval needed).
+Computes the ERC-20/TRC-20 approval that must be granted before calling `swidge()` for offramp or token-swap routes. Returns `null` for onramp routes (BTC source — no token approval needed) and when the current allowance already covers `fromTokenAmount`.
+
+The approval is **unbounded** (`amount` is `2^256 - 1`), as Gateway V4 and `@gobob/bob-sdk` grant it, so one approval covers later orders on the same route. Because an unbounded allowance puts the whole token balance behind the spender, the spender is checked against a hardcoded table of the Gateway's AllowanceHolder contracts per source chain (0x's canonical `0x0000000000001fF3684f28c67538d4D072C22734` on most EVM chains, Gateway's own on BOB and Tron) — never trusted from the create-order response. An unknown chain or a mismatched spender throws `VALIDATION_ERROR` instead of returning an approval; `simulateSwidge()` applies the same check to the approval it reports.
 
 | Return field | Type     | Description                             |
 | ------------ | -------- | --------------------------------------- |
 | `token`      | `string` | ERC-20/TRC-20 token address to approve. |
-| `spender`    | `string` | Spender address (gateway contract).     |
-| `amount`     | `bigint` | Exact amount to approve.                |
+| `spender`    | `string` | Gateway AllowanceHolder for the source chain. |
+| `amount`     | `bigint` | `2^256 - 1` — unbounded approval.       |
 
 On Tron the allowance is read with a constant-contract call through the resolved provider (`WalletAccountTron` has no allowance getter).
 
