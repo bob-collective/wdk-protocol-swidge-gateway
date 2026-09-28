@@ -21,7 +21,9 @@ function fakeClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
     createOrder: vi.fn(async () => ({
       onramp: { order_id: 'o1', address: 'bc1q', inputAmount: { amount: '100000' } },
     })),
-    registerTx: vi.fn(async () => ({})),
+    registerTx: vi.fn(async (body: { onramp: { bitcoin_tx_hex: string } }) => ({
+      onramp: { txid: Transaction.fromHex(body.onramp.bitcoin_tx_hex).getId() },
+    })),
     getOrder: vi.fn(async () => ({ status: { success: { received_tokens: [] } } })),
     getRoutes: vi.fn(async () => []),
     ...overrides,
@@ -97,12 +99,30 @@ describe('GatewaySwidge', () => {
     ).rejects.toThrow(/register-tx reported txid f{64} for order o1/)
   })
 
+  test('swidge onramp: rejects a register-tx response without a txid', async () => {
+    const { hex } = buildMinimalTxHex()
+    const account = { getAddress: async () => 'bc1q', signTransaction: async () => hex }
+    const client = fakeClient({
+      registerTx: vi.fn(async () => ({})) as unknown as GatewayClient['registerTx'],
+    })
+    const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', client })
+    await expect(
+      sw.swidge({
+        fromToken: 'BTC',
+        toToken: 'USDT',
+        toChain: 'base',
+        recipient: '0xrcpt',
+        fromTokenAmount: 100000n,
+      })
+    ).rejects.toThrow(/register-tx reported txid undefined for order o1/)
+  })
+
   test('swidge onramp: accepts the matching register-tx txid', async () => {
     const { hex, txid } = buildMinimalTxHex()
     const account = { getAddress: async () => 'bc1q', signTransaction: async () => hex }
     const client = fakeClient({
       registerTx: vi.fn(async () => ({
-        onramp: { txid },
+        onramp: { txid: '0x' + txid.toUpperCase() },
       })) as unknown as GatewayClient['registerTx'],
     })
     const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', client })
@@ -177,7 +197,7 @@ describe('GatewaySwidge', () => {
         offramp: {
           inputAmount: { amount: '1000' },
           outputAmount: { amount: '900' },
-          srcChain: 'bob',
+          srcChain: 'base',
         },
       })) as unknown as GatewayClient['getQuote'],
       createOrder: vi.fn(async () => ({
@@ -199,6 +219,32 @@ describe('GatewaySwidge', () => {
     expect(evmClient.registerTx).not.toHaveBeenCalled()
     expect(res.id).toBe('o2')
     expect(res.hash).toBe('0xtxhash')
+  })
+
+  test('swidge refuses a quote whose srcChain is not the requested source chain', async () => {
+    const client = fakeClient({
+      getQuote: vi.fn(async () => ({
+        offramp: {
+          inputAmount: { amount: '1000' },
+          outputAmount: { amount: '900' },
+          srcChain: 'bob',
+        },
+      })) as unknown as GatewayClient['getQuote'],
+    })
+    const sw = new GatewaySwidge(
+      { getAddress: async () => '0xsender' },
+      { fromChain: 'base', client }
+    )
+    await expect(
+      sw.swidge({
+        fromToken: '0xtok',
+        toToken: 'BTC',
+        toChain: 'bitcoin',
+        recipient: 'bc1qrcpt',
+        fromTokenAmount: 1000n,
+      })
+    ).rejects.toThrow('quote is for source chain bob, but the route was requested from base')
+    expect(client.createOrder).not.toHaveBeenCalled()
   })
 
   test('swidge offramp from tron: builds the contract call, returns the confirmed txid', async () => {

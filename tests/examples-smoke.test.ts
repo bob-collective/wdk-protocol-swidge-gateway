@@ -9,7 +9,7 @@ const TRON_TXID = buildTronTx({ data: 'feed', feeLimit: 100_000_000 }).txID
 
 function makeMockHttp() {
   return {
-    request: vi.fn(async (_method: string, url: string) => {
+    request: vi.fn(async (_method: string, url: string, opts?: { body?: unknown }) => {
       if (url.includes('get-quote')) {
         return {
           status: 200,
@@ -29,7 +29,8 @@ function makeMockHttp() {
         }
       }
       if (url.includes('register-tx')) {
-        return { status: 200, body: {} }
+        const hex = (opts?.body as { onramp: { bitcoin_tx_hex: string } }).onramp.bitcoin_tx_hex
+        return { status: 200, body: { onramp: { txid: Transaction.fromHex(hex).getId() } } }
       }
       if (url.includes('get-order')) {
         return { status: 200, body: { status: { success: { received_tokens: [] } } } }

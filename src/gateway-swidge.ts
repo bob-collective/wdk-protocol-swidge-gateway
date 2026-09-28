@@ -247,6 +247,16 @@ export class GatewaySwidge extends SwidgeProtocol {
       )
     }
     const quote = (await this._client.getQuote(params)) as Record<string, unknown>
+    const srcChain = (quote[variant] as { srcChain?: unknown } | undefined)?.srcChain
+    if (
+      srcChain !== undefined &&
+      String(srcChain).toLowerCase() !== params.srcChain?.toLowerCase()
+    ) {
+      throw new GatewaySwidgeError(
+        ERR.VALIDATION,
+        `quote is for source chain ${srcChain}, but the route was requested from ${params.srcChain}`
+      )
+    }
     const order = (await this._client.createOrder({ [variant]: quote[variant] })) as Record<
       string,
       unknown
@@ -279,7 +289,8 @@ export class GatewaySwidge extends SwidgeProtocol {
       )
     }
     const reported = (res as { onramp?: { txid?: unknown } } | null)?.onramp?.txid
-    if (typeof reported === 'string' && reported !== txid) {
+    const norm = (id: string) => id.toLowerCase().replace(/^0x/, '')
+    if (typeof reported !== 'string' || norm(reported) !== norm(txid)) {
       throw new GatewaySwidgeError(
         ERR.HTTP,
         `register-tx reported txid ${reported} for order ${body.onramp.order_id}, expected ${txid}`,
@@ -408,7 +419,7 @@ export class GatewaySwidge extends SwidgeProtocol {
   ): Promise<{ token: string; spender: string; amount: bigint } | null> {
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     if (variant === 'onramp') return null
-    const key = `${variant}:${options.fromToken}:${options.toToken}:${(options.toChain as string) || ''}`
+    const key = `${fromChain}:${variant}:${options.fromToken}:${options.toToken}:${(options.toChain as string) || ''}`
     let spender: string
     if (this._spenderCache.has(key)) {
       spender = this._spenderCache.get(key)!
