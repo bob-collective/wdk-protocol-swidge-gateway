@@ -50,9 +50,7 @@ export const evmAdapter = {
   family: 'evm' as const,
 
   /**
-   * Return the approval needed before `send`, or null if none required. The approval is
-   * unbounded (`MAX_UINT256`, as Gateway V4 and bob-sdk grant it); `amount` only decides
-   * whether the current allowance already covers this order.
+   * Return the approval needed before `send`, or null if none required.
    * Returns null when:
    *   - tokenAddress is falsy or the zero address (native asset), or
    *   - existing allowance already covers `amount`.

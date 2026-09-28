@@ -57,12 +57,12 @@ const wdk = new WDK(seedPhrase)
     network: 'bitcoin',
     client: {
       type: 'electrum',
-      clientConfig: { host: 'electrum.blockstream.info', port: 50001 },
-    },
+      clientConfig: { host: 'electrum.blockstream.info', port: 50001 }
+    }
   })
   .registerWallet('ethereum', WalletManagerEvm, {
     chainId: 1,
-    provider: process.env.ETHEREUM_RPC_URL,
+    provider: process.env.ETHEREUM_RPC_URL
   })
   .registerProtocol('bitcoin', 'gateway', GatewaySwidge, { fromChain: 'bitcoin' })
 
@@ -74,7 +74,7 @@ const result = await sw.swidge({
   toToken: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2', // USDT on Base
   toChain: 'base',
   recipient: '0xYourEVMAddress',
-  fromTokenAmount: 100000n, // satoshis
+  fromTokenAmount: 100000n // satoshis
 })
 console.log('Order ID:', result.id, 'Tx hash:', result.hash)
 ```
@@ -86,7 +86,7 @@ import { GatewaySwidge, GatewayClient } from '@gobob/wdk-protocol-swidge-gateway
 
 const sw = new GatewaySwidge(account, {
   fromChain: 'base',
-  slippage: 0.01,
+  slippage: 0.01
 })
 ```
 
@@ -104,7 +104,7 @@ const result = await sw.swidge({
   toToken: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2', // USDT on Base
   toChain: 'base',
   recipient: '0xRecipient',
-  fromTokenAmount: 100000n, // satoshis
+  fromTokenAmount: 100000n // satoshis
 })
 ```
 
@@ -122,7 +122,7 @@ const options = {
   toToken: 'BTC',
   toChain: 'bitcoin',
   recipient: 'bc1qRecipientAddress',
-  fromTokenAmount: 1000000n, // USDT (6 decimals)
+  fromTokenAmount: 1000000n // USDT (6 decimals)
 }
 
 // Check and grant approval first
@@ -142,9 +142,9 @@ import { GatewaySwidge } from '@gobob/wdk-protocol-swidge-gateway'
 
 const sw = new GatewaySwidge(account, { fromChain: 'base' })
 const result = await sw.swap({
-  tokenIn: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
+  tokenIn: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',  // USDC on Base
   tokenOut: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2', // USDT on Base
-  tokenInAmount: 1000000n,
+  tokenInAmount: 1000000n
 })
 ```
 
@@ -160,7 +160,7 @@ const result = await sw.swidge({
   toToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', // USDT on Tron
   toChain: 'tron',
   recipient: 'TRecipientAddress',
-  fromTokenAmount: 100000n,
+  fromTokenAmount: 100000n
 })
 ```
 
@@ -227,14 +227,14 @@ import { GatewaySwidge } from '@gobob/wdk-protocol-swidge-gateway'
 
 const sw = new GatewaySwidge(account, {
   fromChain: 'bitcoin',
-  affiliates: [{ address: '0xPartnerAddress', bps: 30 }], // 0.3%
+  affiliates: [{ address: '0xPartnerAddress', bps: 30 }] // 0.3%
 })
 const result = await sw.swidge({
   fromToken: 'BTC',
   toToken: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
   toChain: 'base',
   recipient: '0xRecipient',
-  fromTokenAmount: 100000n,
+  fromTokenAmount: 100000n
 })
 ```
 
@@ -253,7 +253,7 @@ const quote = await sw.quoteSwidge({
   toToken: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
   toChain: 'base',
   recipient: '0xRecipient',
-  fromTokenAmount: 100000n,
+  fromTokenAmount: 100000n
 })
 console.log('Expected output:', quote.toTokenAmount)
 
@@ -267,34 +267,28 @@ console.log(status.status, status.transactions)
 ### Exports
 
 ```js
-import {
-  GatewaySwidge,
-  GatewayClient,
-  GatewaySwidgeError,
-  ERR,
-  BTC,
-} from '@gobob/wdk-protocol-swidge-gateway'
+import { GatewaySwidge, GatewayClient, GatewaySwidgeError, ERR, BTC } from '@gobob/wdk-protocol-swidge-gateway'
 // Default export:
 import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 ```
 
 ### `new GatewaySwidge(account, config?)`
 
-| Parameter                     | Type                                     | Description                                                                                                                                |
-| ----------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `account`                     | `object`                                 | WDK wallet account (BTC, EVM or Tron).                                                                                                     |
-| `config.apiUrl`               | `string?`                                | Gateway API base URL.                                                                                                                      |
-| `config.bearerToken`          | `string?`                                | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee, attributes volume to BOB).                                         |
-| `config.http`                 | `object?`                                | Injectable HTTP transport (useful for testing).                                                                                            |
-| `config.affiliates`           | `Array<{address: string, bps: number}>?` | Affiliate fee entries.                                                                                                                     |
-| `config.paymasterToken`       | `string?`                                | ERC-20 paymaster token for AA accounts.                                                                                                    |
-| `config.slippage`             | `number?`                                | Default slippage fraction (e.g. `0.01` = 1%). Unset: omitted, and the gateway picks a tolerance per route and echoes it in the quote.      |
-| `config.feeRate`              | `number?`                                | BTC fee rate in sat/vByte.                                                                                                                 |
-| `config.fromChain`            | `string?`                                | Source chain id. Required when not passed in `SwidgeOptions`.                                                                              |
-| `config.refundAddress`        | `string?`                                | Refund target, encoded for the **source** chain. Defaults to the account's own address (see below).                                        |
-| `config.tronWeb`              | `object?`                                | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. Defaults to the account's own provider. |
-| `config.tronProvider`         | `string?`                                | Tron source routes only. Full-node URL to build a tronweb client from.                                                                     |
-| `config.tronConfirmTimeoutMs` | `number?`                                | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node — finite, `>= 0` (default `20000` ms).       |
+| Parameter               | Type                                     | Description                                                                                                                                |
+| ----------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `account`               | `object`                                 | WDK wallet account (BTC, EVM or Tron).                                                                                                     |
+| `config.apiUrl`         | `string?`                                | Gateway API base URL.                                                                                                                      |
+| `config.bearerToken`    | `string?`                                | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee, attributes volume to BOB).                                         |
+| `config.http`           | `object?`                                | Injectable HTTP transport (useful for testing).                                                                                            |
+| `config.affiliates`     | `Array<{address: string, bps: number}>?` | Affiliate fee entries.                                                                                                                     |
+| `config.paymasterToken` | `string?`                                | ERC-20 paymaster token for AA accounts.                                                                                                    |
+| `config.slippage`       | `number?`                                | Default slippage fraction (e.g. `0.01` = 1%). Unset: omitted, and the gateway picks a tolerance per route and echoes it in the quote.      |
+| `config.feeRate`        | `number?`                                | BTC fee rate in sat/vByte.                                                                                                                 |
+| `config.fromChain`      | `string?`                                | Source chain id. Required when not passed in `SwidgeOptions`.                                                                              |
+| `config.refundAddress`  | `string?`                                | Refund target, encoded for the **source** chain. Defaults to the account's own address (see below).                                        |
+| `config.tronWeb`        | `object?`                                | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. Defaults to the account's own provider. |
+| `config.tronProvider`   | `string?`                                | Tron source routes only. Full-node URL to build a tronweb client from.                                                                     |
+| `config.tronConfirmTimeoutMs` | `number?`                          | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node — finite, `>= 0` (default `20000` ms).       |
 
 Gateway V4 requires a `refundAddress` on every route before it will create an order (`MISSING_REFUND_ADDRESS` otherwise), encoded for the **source** chain: a Bitcoin address on an onramp, the EVM `0x…` or Tron Base58Check sender on an offramp or token swap. The module defaults it to the account's own address — the wallet the funds leave from — so a failed order refunds to where it came from. Set `config.refundAddress` (or `refundAddress` per call) to refund elsewhere on the same source chain. V3's `ownerAddress` no longer exists.
 
@@ -372,7 +366,7 @@ On Tron the allowance is read with a constant-contract call through the resolved
 
 - **Approval pre-flight (`getRequiredApproval`) is a simple allowance check:** It returns an approval whenever `allowance < fromTokenAmount`. Some OFT-style receiver contracts do not require an ERC-20 approval at all; for those, approving anyway is harmless (the gateway contract ignores the allowance). The `@gobob/bob-sdk` additionally probes the receiver's `approvalRequired()` method; this module does not — it relies on the gateway to route the transaction correctly.
 
-- **Only onramps call register-tx:** In V4 register-tx is onramp-only and _is_ the broadcast — the module hands the gateway the signed raw BTC tx hex, the gateway validates, screens and submits it, and the client never broadcasts it itself. A register-tx failure therefore throws instead of returning a txid: a 4xx rejection throws `GATEWAY_HTTP_ERROR` (nothing was sent), while a network error, timeout, 5xx or mismatched txid throws `BROADCAST_STATE_UNKNOWN` — the tx may have gone out, so check the txid on chain or `getSwidgeStatus(orderId)` before signing a new one. Offramp and token-swap source transactions are broadcast by the WDK account and indexed by the gateway from chain; there is nothing to register. On a Tron source route the hash is first read back from the node (see above), because a Tron txid exists before the transaction does; that read-back waits for acceptance, never for mining.
+- **Only onramps call register-tx:** In V4 register-tx is onramp-only and _is_ the broadcast — the module hands the gateway the signed raw BTC tx hex, the gateway validates, screens and submits it, and the client never broadcasts it itself. A register-tx failure therefore throws instead of returning a txid; the tx may still have gone out, so check the chain or `getSwidgeStatus(orderId)` before signing a new one. Offramp and token-swap source transactions are broadcast by the WDK account and indexed by the gateway from chain; there is nothing to register. On a Tron source route the hash is first read back from the node (see above), because a Tron txid exists before the transaction does; that read-back waits for acceptance, never for mining.
 
 - **Gas:** The module relies on the WDK account's built-in gas estimation with no extra buffer. If an offramp contract call ever reverts out-of-gas, pass a gas override via the account's send options or raise an issue.
 

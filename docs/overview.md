@@ -69,7 +69,7 @@ const result = await sw.swidge({
   toToken: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
   toChain: 'base',
   recipient: '0xYourAddress',
-  fromTokenAmount: 100000n, // satoshis
+  fromTokenAmount: 100000n // satoshis
 })
 console.log(result.id, result.hash)
 ```

@@ -49,7 +49,7 @@ interface RawQuote {
 }
 
 /**
- * Extract a normalised payload from a GatewayCreateOrderV3 response (V4 create-order still answers the V3 model).
+ * Extract a normalised payload from a GatewayCreateOrderV3 response.
  *
  * The wire response is an externally-tagged union: `{ onramp: {...} }` |
  * `{ offramp: {...} }` | `{ tokenSwap: {...} }`.

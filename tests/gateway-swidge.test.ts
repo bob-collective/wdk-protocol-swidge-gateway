@@ -3,7 +3,6 @@ import { MAX_UINT256 } from '../src/allowance-holder.js'
 import { Transaction } from 'bitcoinjs-lib'
 import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
-import { GatewaySwidgeError, ERR } from '../src/errors.js'
 import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
 
 const TRON_TXID = buildTronTx({ data: 'feed', feeLimit: 100_000_000 }).txID
@@ -53,47 +52,29 @@ describe('GatewaySwidge', () => {
     expect(res.hash).toBe(txid)
   })
 
-  const onrampWith = (registerTx: () => Promise<unknown>) => {
+  test('swidge onramp: registerTx failure throws without claiming the tx was not sent', async () => {
     const { hex, txid } = buildMinimalTxHex()
-    const account = { getAddress: async () => 'bc1q', signTransaction: async () => hex }
+    const account = {
+      getAddress: async () => 'bc1q',
+      signTransaction: async () => hex,
+    }
     const client = fakeClient({
-      registerTx: vi.fn(registerTx) as unknown as GatewayClient['registerTx'],
+      registerTx: vi.fn(async () => {
+        throw new Error('network error')
+      }) as unknown as GatewayClient['registerTx'],
     })
     const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', client })
-    const run = sw.swidge({
-      fromToken: 'BTC',
-      toToken: 'USDT',
-      toChain: 'base',
-      recipient: '0xrcpt',
-      fromTokenAmount: 100000n,
-    })
-    return { run, txid }
-  }
-
-  test('swidge onramp: a 4xx register-tx rejection throws "not broadcast"', async () => {
-    const { run, txid } = onrampWith(async () => {
-      throw new GatewaySwidgeError(ERR.HTTP, 'INVALID_TX: bad', { status: 400 })
-    })
-    await expect(run).rejects.toMatchObject({
-      code: ERR.HTTP,
-      status: 400,
-      message: `register-tx rejected for order o1: the signed bitcoin transaction ${txid} was not broadcast`,
-    })
-  })
-
-  test.each([
-    ['a network error', () => new Error('ECONNRESET')],
-    ['a 5xx', () => new GatewaySwidgeError(ERR.HTTP, 'upstream', { status: 502 })],
-    ['a 408', () => new GatewaySwidgeError(ERR.HTTP, 'timeout', { status: 408 })],
-  ])('swidge onramp: %s from register-tx leaves the broadcast state unknown', async (_, mk) => {
-    const { run, txid } = onrampWith(async () => {
-      throw mk()
-    })
-    const err = await run.catch((e: unknown) => e)
-    expect(err).toMatchObject({ code: ERR.BROADCAST_UNKNOWN })
-    expect((err as Error).message).toContain(txid)
-    expect((err as Error).message).toContain("getSwidgeStatus('o1') before resending")
-    expect((err as Error).message).not.toMatch(/was not broadcast/)
+    await expect(
+      sw.swidge({
+        fromToken: 'BTC',
+        toToken: 'USDT',
+        toChain: 'base',
+        recipient: '0xrcpt',
+        fromTokenAmount: 100000n,
+      })
+    ).rejects.toThrow(
+      `register-tx failed for order o1: bitcoin transaction ${txid} may or may not have been broadcast`
+    )
   })
 
   test('swidge onramp: rejects a register-tx txid that is not the one signed', async () => {
@@ -113,12 +94,7 @@ describe('GatewaySwidge', () => {
         recipient: '0xrcpt',
         fromTokenAmount: 100000n,
       })
-    ).rejects.toMatchObject({
-      code: ERR.BROADCAST_UNKNOWN,
-      message: expect.stringMatching(
-        /register-tx reported txid f{64}, expected [0-9a-f]{64}, for order o1/
-      ),
-    })
+    ).rejects.toThrow(/register-tx reported txid f{64} for order o1/)
   })
 
   test('swidge onramp: accepts the matching register-tx txid', async () => {
@@ -137,6 +113,7 @@ describe('GatewaySwidge', () => {
       recipient: '0xrcpt',
       fromTokenAmount: 100000n,
     })
+    expect(res.id).toBe('o1')
     expect(res.hash).toBe(txid)
   })
 

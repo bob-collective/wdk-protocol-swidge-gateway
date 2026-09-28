@@ -18,10 +18,10 @@
  *   AMOUNT_USDT     — USDT offramp amount in smallest unit (default: 50000000 = 50 USDT)
  */
 
-import { WalletAccountBtc } from '@tetherto/wdk-wallet-btc';
-import { WalletAccountEvm } from '@tetherto/wdk-wallet-evm';
-import { WalletAccountTron } from '@tetherto/wdk-wallet-tron';
 import { describe, test, expect } from 'vitest'
+import type { WalletAccountBtc } from '@tetherto/wdk-wallet-btc'
+import type { WalletAccountEvm } from '@tetherto/wdk-wallet-evm'
+import type { WalletAccountTron } from '@tetherto/wdk-wallet-tron'
 
 const RUN = !!process.env.TEST_SEED
 

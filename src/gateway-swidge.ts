@@ -263,43 +263,28 @@ export class GatewaySwidge extends SwidgeProtocol {
 
   /**
    * Hand the signed onramp tx to the gateway for broadcast, and check that the txid it reports
-   * is the one we signed.
-   *
-   * Only a 4xx rejection (other than 408) proves the tx was not sent: `registerTx` retries 429s
-   * alone, so no earlier attempt can have been processed. Anything else — a network error,
-   * timeout, 5xx or a mismatched txid — leaves the broadcast state unknown, and the error says so
-   * rather than inviting a resend that would pay twice.
+   * is the one we signed. A failure can follow a broadcast that did go out (e.g. a retry after a
+   * lost response), so the error never claims the tx was not sent.
    */
   private async _registerOnramp(body: RegisterTxV4, txid: string): Promise<void> {
-    const orderId = body.onramp.order_id
-    const unknown = (reason: string, opts: { status?: number; cause?: unknown }) =>
-      new GatewaySwidgeError(
-        ERR.BROADCAST_UNKNOWN,
-        `${reason} for order ${orderId}: the bitcoin transaction ${txid} may or may not have ` +
-          `been broadcast — check the chain or getSwidgeStatus('${orderId}') before resending`,
-        opts
-      )
     let res: unknown
     try {
       res = await this._client.registerTx(body)
     } catch (err) {
-      const status = (err as { status?: unknown })?.status
-      if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408) {
-        throw new GatewaySwidgeError(
-          ERR.HTTP,
-          `register-tx rejected for order ${orderId}: the signed bitcoin transaction ${txid} ` +
-            `was not broadcast`,
-          { status, cause: err }
-        )
-      }
-      throw unknown('register-tx failed', {
-        status: typeof status === 'number' ? status : undefined,
-        cause: err,
-      })
+      throw new GatewaySwidgeError(
+        ERR.HTTP,
+        `register-tx failed for order ${body.onramp.order_id}: bitcoin transaction ${txid} may ` +
+          'or may not have been broadcast — check the chain before resending',
+        { status: (err as { status?: number })?.status, cause: err }
+      )
     }
     const reported = (res as { onramp?: { txid?: unknown } } | null)?.onramp?.txid
     if (typeof reported === 'string' && reported !== txid) {
-      throw unknown(`register-tx reported txid ${reported}, expected ${txid},`, { cause: res })
+      throw new GatewaySwidgeError(
+        ERR.HTTP,
+        `register-tx reported txid ${reported} for order ${body.onramp.order_id}, expected ${txid}`,
+        { cause: res }
+      )
     }
   }
 
@@ -308,7 +293,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    *
    * Follows the same setup as `swidge()` up through building the payload, then calls the
    * adapter's `simulate()` instead of `send()`. The Gateway order created here is orphaned
-   * (no register-tx call, no broadcast) — the gateway reconciles orphaned orders automatically.
+   * (no registerTx call, no broadcast) — the gateway reconciles orphaned orders automatically.
    *
    * Returns a `SwidgeSimulation` describing the dry-run result, including validity and gas/fee
    * estimates. `broadcast` is always `false`.

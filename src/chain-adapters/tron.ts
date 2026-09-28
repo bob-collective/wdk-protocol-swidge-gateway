@@ -303,7 +303,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-
 function resolveGetTransaction(
   account: TronAccount,
   tronWeb: TronWebLike
@@ -411,8 +410,8 @@ export const tronAdapter = {
         { cause: res }
       )
     }
-    // Unbounded, as Gateway V4 and bob-sdk grant it; `amount` only decides whether it's needed.
-    if (BigInt(`0x${word}`) >= BigInt(amount)) return null
+    const required = BigInt(amount)
+    if (BigInt(`0x${word}`) >= required) return null
     return { token: tokenAddress, spender, amount: MAX_UINT256 }
   },
 

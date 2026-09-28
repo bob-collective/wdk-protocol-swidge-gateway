@@ -71,7 +71,7 @@ Returns a quote without submitting any transaction. Use to show expected output 
 
 #### `swidge(options: SwidgeOptions) → Promise<SwidgeResult>`
 
-Executes a swidge. Internally: fetches a quote, creates an order, then either hands the signed BTC transaction to the gateway's register-tx for broadcast (onramp — a register-tx failure throws, since nothing was sent) or broadcasts the EVM/Tron source transaction from the account (offramp/token swap — the gateway indexes it from chain; V4 has no register-tx for these).
+Executes a swidge. Internally: fetches a quote, creates an order, then either hands the signed BTC transaction to the gateway's register-tx for broadcast (onramp — a register-tx failure throws; check the chain before resending, the tx may still have gone out) or broadcasts the EVM/Tron source transaction from the account (offramp/token swap — the gateway indexes it from chain; V4 has no register-tx for these).
 
 **Returns `SwidgeResult`:**
 

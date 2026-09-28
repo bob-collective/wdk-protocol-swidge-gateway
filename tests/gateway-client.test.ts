@@ -58,24 +58,4 @@ describe('GatewayClient', () => {
     // 1 initial + 2 retries = 3 total calls
     expect(t.request).toHaveBeenCalledTimes(3)
   })
-
-  test('registerTx retries a 429 — the gateway turned it away unprocessed', async () => {
-    let calls = 0
-    const t = transport(async () =>
-      ++calls < 2 ? { status: 429, body: {} } : { status: 200, body: { onramp: {} } }
-    )
-    const c = new GatewayClient({ apiUrl: 'https://api', http: t })
-    await expect(c.registerTx({})).resolves.toEqual({ onramp: {} })
-    expect(t.request).toHaveBeenCalledTimes(2)
-  })
-
-  test.each([
-    ['network error', async () => Promise.reject(new Error('ECONNRESET'))],
-    ['503', async () => ({ status: 503, body: {} })],
-  ])('registerTx does not replay after a %s (it may already have broadcast)', async (_, impl) => {
-    const t = transport(impl as HttpTransport['request'])
-    const c = new GatewayClient({ apiUrl: 'https://api', http: t })
-    await expect(c.registerTx({})).rejects.toBeDefined()
-    expect(t.request).toHaveBeenCalledTimes(1)
-  })
 })

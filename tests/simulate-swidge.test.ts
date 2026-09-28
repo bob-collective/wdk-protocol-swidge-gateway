@@ -53,7 +53,10 @@ function fakeEvmClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
       offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, fees: {} },
     })),
     createOrder: vi.fn(async () => ({
-      offramp: { order_id: 'sim-order-evm', tx: { to: '0x0000000000001fF3684f28c67538d4D072C22734', data: '0xdata', value: '0' } },
+      offramp: {
+        order_id: 'sim-order-evm',
+        tx: { to: '0x0000000000001fF3684f28c67538d4D072C22734', data: '0xdata', value: '0' },
+      },
     })),
     registerTx: vi.fn(async () => ({})),
     getOrder: vi.fn(async () => ({ status: { success: { received_tokens: [] } } })),
@@ -184,7 +187,11 @@ describe('evmAdapter.simulate()', () => {
     expect(result.valid).toBe(false)
     expect(result.gasEstimate).toBeNull()
     expect(result.reason).toContain('insufficient allowance')
-    expect(result.requiredApproval).toEqual({ token: '0xtok', spender: '0xspender', amount: MAX_UINT256 })
+    expect(result.requiredApproval).toEqual({
+      token: '0xtok',
+      spender: '0xspender',
+      amount: MAX_UINT256,
+    })
     expect(account.sendTransaction).not.toHaveBeenCalled()
   })
 
@@ -201,7 +208,11 @@ describe('evmAdapter.simulate()', () => {
       amount: 1000n,
     })
     expect(result.valid).toBe(true)
-    expect(result.requiredApproval).toEqual({ token: '0xtok', spender: '0xspender', amount: MAX_UINT256 })
+    expect(result.requiredApproval).toEqual({
+      token: '0xtok',
+      spender: '0xspender',
+      amount: MAX_UINT256,
+    })
   })
 
   test('valid: false when the allowance read itself fails, no rethrow', async () => {

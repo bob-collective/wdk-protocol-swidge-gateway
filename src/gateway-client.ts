@@ -27,14 +27,6 @@ function isTransient(err: unknown): boolean {
 }
 
 /**
- * A 429 is the only failure that proves the gateway turned the request away before acting on
- * it. Network errors, timeouts and 5xx may follow a request the gateway already handled.
- */
-function isUnprocessed(err: unknown): boolean {
-  return (err as { status?: unknown } | null)?.status === 429
-}
-
-/**
  * Pull a readable message out of an error body. The V4 API answers `{ code, error, details? }`
  * (`GatewayErrorV4`); `message` is kept for proxies and older error shapes.
  */
@@ -77,13 +69,9 @@ export class GatewayClient {
   private async _call(
     method: string,
     path: string,
-    opts: {
-      query?: Record<string, string | undefined>
-      body?: unknown
-      retryIf?: (err: unknown) => boolean
-    } = {}
+    opts: { query?: Record<string, string | undefined>; body?: unknown } = {}
   ): Promise<unknown> {
-    const { query, body, retryIf = isTransient } = opts
+    const { query, body } = opts
     let attempt = 0
     for (;;) {
       attempt++
@@ -98,7 +86,7 @@ export class GatewayClient {
         resBody = res.body
       } catch (err) {
         // Network-level error (ECONNRESET, ETIMEDOUT, etc.)
-        if (attempt <= this._maxRetries && retryIf(err)) {
+        if (attempt <= this._maxRetries && isTransient(err)) {
           await sleep(200 * attempt)
           continue
         }
@@ -112,7 +100,7 @@ export class GatewayClient {
       // before the order was created (the common case for 429/connect/timeout). A duplicate
       // order would be an unfulfilled orphan — consistent with how the gateway-cli retries
       // the whole flow.
-      if (attempt <= this._maxRetries && retryIf(gwErr)) {
+      if (attempt <= this._maxRetries && isTransient(gwErr)) {
         await sleep(200 * attempt)
         continue
       }
@@ -126,13 +114,8 @@ export class GatewayClient {
   createOrder(quote: unknown): Promise<unknown> {
     return this._call('POST', '/v4/create-order', { body: quote })
   }
-  /**
-   * register-tx is the onramp broadcast, so it is retried only on a 429. Replaying it after an
-   * ambiguous failure could turn "already broadcast" into a rejection that reads like "never
-   * sent" — the caller would then pay twice.
-   */
   registerTx(body: unknown): Promise<unknown> {
-    return this._call('PATCH', '/v4/register-tx', { body, retryIf: isUnprocessed })
+    return this._call('PATCH', '/v4/register-tx', { body })
   }
   getOrder(id: string): Promise<unknown> {
     return this._call('GET', `/v4/get-order/${id}`)
