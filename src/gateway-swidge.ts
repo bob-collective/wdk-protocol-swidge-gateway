@@ -264,26 +264,42 @@ export class GatewaySwidge extends SwidgeProtocol {
   /**
    * Hand the signed onramp tx to the gateway for broadcast, and check that the txid it reports
    * is the one we signed.
+   *
+   * Only a 4xx rejection (other than 408) proves the tx was not sent: `registerTx` retries 429s
+   * alone, so no earlier attempt can have been processed. Anything else — a network error,
+   * timeout, 5xx or a mismatched txid — leaves the broadcast state unknown, and the error says so
+   * rather than inviting a resend that would pay twice.
    */
   private async _registerOnramp(body: RegisterTxV4, txid: string): Promise<void> {
+    const orderId = body.onramp.order_id
+    const unknown = (reason: string, opts: { status?: number; cause?: unknown }) =>
+      new GatewaySwidgeError(
+        ERR.BROADCAST_UNKNOWN,
+        `${reason} for order ${orderId}: the bitcoin transaction ${txid} may or may not have ` +
+          `been broadcast — check the chain or getSwidgeStatus('${orderId}') before resending`,
+        opts
+      )
     let res: unknown
     try {
       res = await this._client.registerTx(body)
     } catch (err) {
-      throw new GatewaySwidgeError(
-        ERR.HTTP,
-        `register-tx failed for order ${body.onramp.order_id}: the signed bitcoin transaction ` +
-          `${txid} was not broadcast`,
-        { status: (err as { status?: number })?.status, cause: err }
-      )
+      const status = (err as { status?: unknown })?.status
+      if (typeof status === 'number' && status >= 400 && status < 500 && status !== 408) {
+        throw new GatewaySwidgeError(
+          ERR.HTTP,
+          `register-tx rejected for order ${orderId}: the signed bitcoin transaction ${txid} ` +
+            `was not broadcast`,
+          { status, cause: err }
+        )
+      }
+      throw unknown('register-tx failed', {
+        status: typeof status === 'number' ? status : undefined,
+        cause: err,
+      })
     }
     const reported = (res as { onramp?: { txid?: unknown } } | null)?.onramp?.txid
     if (typeof reported === 'string' && reported !== txid) {
-      throw new GatewaySwidgeError(
-        ERR.HTTP,
-        `register-tx reported txid ${reported} for order ${body.onramp.order_id}, expected ${txid}`,
-        { cause: res }
-      )
+      throw unknown(`register-tx reported txid ${reported}, expected ${txid},`, { cause: res })
     }
   }
 
