@@ -51,11 +51,6 @@ export interface GatewaySwidgeConfig {
   slippage?: number
   feeRate?: number
   fromChain?: string
-  /**
-   * Refund target for every route, encoded for the **source** chain (a Bitcoin address on an
-   * onramp, the EVM/Tron sender on an offramp or token swap). Defaults to the account's own
-   * address; a per-call `options.refundAddress` wins over both.
-   */
   refundAddress?: string
   tronWeb?: TronOpts['tronWeb']
   tronProvider?: string
@@ -148,9 +143,6 @@ export class GatewaySwidge extends SwidgeProtocol {
       this._account && typeof this._account.getAddress === 'function'
         ? await this._account.getAddress()
         : undefined
-    // V4 refunds to the source chain on every route, so the source account is the natural
-    // default: the BTC sender on an onramp, the EVM/Tron sender otherwise. Kept in its
-    // source-chain encoding — no Tron→0x conversion (that was V3's EVM-only `ownerAddress`).
     const refundAddress = this._refundAddress ?? fromAddress
     const params = toQuoteParams(
       {
@@ -209,9 +201,6 @@ export class GatewaySwidge extends SwidgeProtocol {
         { ...payload },
         { feeRate: this._feeRate }
       )
-      // V4 register-tx is the broadcast: the gateway validates, screens and submits the signed
-      // tx, and the client never broadcasts it itself. A failure here means nothing went out,
-      // so it must surface instead of handing back a txid for a transaction that doesn't exist.
       await this._registerOnramp({ onramp: { order_id: payload.orderId, bitcoin_tx_hex: hex } }, id)
       txid = id
     } else {
@@ -401,10 +390,6 @@ export class GatewaySwidge extends SwidgeProtocol {
   /**
    * Returns the ERC-20/TRC-20 approval the caller must grant before an offramp/tokenSwap swidge,
    * or null when none is needed (incl. all onramp routes).
-   *
-   * The approval is unbounded (`MAX_UINT256`), so its spender must be the AllowanceHolder the
-   * Gateway uses on the source chain — checked against a hardcoded table, never trusted from the
-   * create-order response.
    *
    * NOTE: on a cache miss this creates a Gateway order to discover the spender contract address
    * (the V4 API exposes no read-only spender lookup); results are cached per route on this
