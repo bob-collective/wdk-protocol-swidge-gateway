@@ -1,4 +1,5 @@
 import { describe, test, expect, vi } from 'vitest'
+import { MAX_UINT256 } from '../src/allowance-holder.js'
 import { evmAdapter } from '../src/chain-adapters/evm.js'
 
 describe('evmAdapter', () => {
@@ -37,7 +38,7 @@ describe('evmAdapter', () => {
     const account = { getAllowance: vi.fn(async () => 100n) }
     const out = await evmAdapter.getRequiredApproval(account, '0xtok', '0xspender', 500n)
     expect(account.getAllowance).toHaveBeenCalledWith('0xtok', '0xspender')
-    expect(out).toEqual({ token: '0xtok', spender: '0xspender', amount: 500n })
+    expect(out).toEqual({ token: '0xtok', spender: '0xspender', amount: MAX_UINT256 })
     expect(typeof out!.amount).toBe('bigint')
   })
 

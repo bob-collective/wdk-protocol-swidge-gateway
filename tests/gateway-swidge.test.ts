@@ -1,4 +1,5 @@
 import { describe, test, expect, vi } from 'vitest'
+import { MAX_UINT256 } from '../src/allowance-holder.js'
 import { Transaction } from 'bitcoinjs-lib'
 import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
@@ -487,7 +488,7 @@ describe('GatewaySwidge', () => {
     expect(out).toEqual({
       token: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
       spender: REGISTRY,
-      amount: 1000000n,
+      amount: MAX_UINT256,
     })
   })
 
@@ -497,7 +498,10 @@ describe('GatewaySwidge', () => {
         offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, fees: {} },
       })) as unknown as GatewayClient['getQuote'],
       createOrder: vi.fn(async () => ({
-        offramp: { order_id: 'o3', tx: { to: '0xspender', data: '0xdata', value: '0' } },
+        offramp: {
+          order_id: 'o3',
+          tx: { to: '0x0000000000001fF3684f28c67538d4D072C22734', data: '0xdata', value: '0' },
+        },
       })) as unknown as GatewayClient['createOrder'],
     })
     const account = {
@@ -517,8 +521,16 @@ describe('GatewaySwidge', () => {
     const second = await sw.getRequiredApproval(options)
 
     expect(offrampClient.createOrder).toHaveBeenCalledTimes(1)
-    expect(first).toEqual({ token: '0xtok', spender: '0xspender', amount: 500n })
-    expect(second).toEqual({ token: '0xtok', spender: '0xspender', amount: 500n })
+    expect(first).toEqual({
+      token: '0xtok',
+      spender: '0x0000000000001fF3684f28c67538d4D072C22734',
+      amount: MAX_UINT256,
+    })
+    expect(second).toEqual({
+      token: '0xtok',
+      spender: '0x0000000000001fF3684f28c67538d4D072C22734',
+      amount: MAX_UINT256,
+    })
   })
 
   test('getRequiredApproval: returns null for onramp routes without calling createOrder', async () => {

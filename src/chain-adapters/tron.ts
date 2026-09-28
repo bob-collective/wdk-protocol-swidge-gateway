@@ -1,4 +1,5 @@
 import { GatewaySwidgeError, ERR } from '../errors.js'
+import { MAX_UINT256 } from '../allowance-holder.js'
 
 const APPROVE_SELECTOR = 'approve(address,uint256)'
 const ALLOWANCE_SELECTOR = 'allowance(address,address)'
@@ -410,9 +411,9 @@ export const tronAdapter = {
         { cause: res }
       )
     }
-    const required = BigInt(amount)
-    if (BigInt(`0x${word}`) >= required) return null
-    return { token: tokenAddress, spender, amount: required }
+    // Unbounded, as Gateway V4 and bob-sdk grant it; `amount` only decides whether it's needed.
+    if (BigInt(`0x${word}`) >= BigInt(amount)) return null
+    return { token: tokenAddress, spender, amount: MAX_UINT256 }
   },
 
   async send(

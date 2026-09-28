@@ -239,8 +239,9 @@ switch (PHASE) {
         await waitForApproval(async () => {
           const allowance = await evmAccount.getAllowance(approval.token, approval.spender)
           return {
-            done: allowance >= approval.amount,
-            detail: `allowance=${String(allowance)}  required=${String(approval.amount)}`,
+            // The approval is unbounded; the swap only needs fromTokenAmount of it.
+            done: allowance >= BigInt(fromTokenAmount),
+            detail: `allowance=${String(allowance)}  required=${String(fromTokenAmount)}`,
           }
         })
       }

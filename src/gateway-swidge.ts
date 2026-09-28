@@ -26,6 +26,7 @@ import { orderPayload } from './map/order.js'
 import type { OrderPayload } from './map/order.js'
 import type { RegisterTxV4, SwidgeSimulation } from './types.js'
 import { GatewaySwidgeError, ERR } from './errors.js'
+import { assertAllowanceHolderSpender } from './allowance-holder.js'
 
 const BOB_BEARER_TOKEN = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
 
@@ -311,7 +312,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @returns Dry-run result with route-specific validity and fee estimates.
    */
   async simulateSwidge(options: SwidgeOptions & { fromChain?: string }): Promise<SwidgeSimulation> {
-    const { params, variant, srcFamily } = await this._buildQuoteParams(options)
+    const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     const { quote, payload } = await this._createOrder(params, variant, srcFamily)
     const adapter = getAdapter(srcFamily)
     const sq = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
@@ -338,23 +339,22 @@ export class GatewaySwidge extends SwidgeProtocol {
       amount: options.fromTokenAmount,
     }
     if (payload.kind === 'tron') {
-      return {
-        ...common,
-        tron: await (adapter as typeof tronAdapter).simulate(
-          this._account,
-          { ...payload },
-          { ...this._tronOpts, ...approvalOpts }
-        ),
-      }
-    }
-    return {
-      ...common,
-      evm: await (adapter as typeof evmAdapter).simulate(
+      const tron = await (adapter as typeof tronAdapter).simulate(
         this._account,
         { ...payload },
-        approvalOpts
-      ),
+        { ...this._tronOpts, ...approvalOpts }
+      )
+      if (tron.requiredApproval)
+        assertAllowanceHolderSpender(fromChain, tron.requiredApproval.spender)
+      return { ...common, tron }
     }
+    const evm = await (adapter as typeof evmAdapter).simulate(
+      this._account,
+      { ...payload },
+      approvalOpts
+    )
+    if (evm.requiredApproval) assertAllowanceHolderSpender(fromChain, evm.requiredApproval.spender)
+    return { ...common, evm }
   }
 
   /**
@@ -402,6 +402,10 @@ export class GatewaySwidge extends SwidgeProtocol {
    * Returns the ERC-20/TRC-20 approval the caller must grant before an offramp/tokenSwap swidge,
    * or null when none is needed (incl. all onramp routes).
    *
+   * The approval is unbounded (`MAX_UINT256`), so its spender must be the AllowanceHolder the
+   * Gateway uses on the source chain — checked against a hardcoded table, never trusted from the
+   * create-order response.
+   *
    * NOTE: on a cache miss this creates a Gateway order to discover the spender contract address
    * (the V4 API exposes no read-only spender lookup); results are cached per route on this
    * instance, so call it once per route, not before every swap.
@@ -416,7 +420,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       fromTokenAmount: bigint | string | number
     }
   ): Promise<{ token: string; spender: string; amount: bigint } | null> {
-    const { params, variant, srcFamily } = await this._buildQuoteParams(options)
+    const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     if (variant === 'onramp') return null
     const key = `${variant}:${options.fromToken}:${options.toToken}:${(options.toChain as string) || ''}`
     let spender: string
@@ -429,21 +433,23 @@ export class GatewaySwidge extends SwidgeProtocol {
       spender = payload.tx.to
       this._spenderCache.set(key, spender)
     }
-    if (srcFamily === 'tron') {
-      return tronAdapter.getRequiredApproval(
-        this._account,
-        options.fromToken,
-        spender,
-        options.fromTokenAmount,
-        this._tronOpts
-      )
-    }
-    return evmAdapter.getRequiredApproval(
-      this._account,
-      options.fromToken,
-      spender,
-      options.fromTokenAmount
-    )
+    const approval =
+      srcFamily === 'tron'
+        ? await tronAdapter.getRequiredApproval(
+            this._account,
+            options.fromToken,
+            spender,
+            options.fromTokenAmount,
+            this._tronOpts
+          )
+        : await evmAdapter.getRequiredApproval(
+            this._account,
+            options.fromToken,
+            spender,
+            options.fromTokenAmount
+          )
+    if (approval) assertAllowanceHolderSpender(fromChain, approval.spender)
+    return approval
   }
 }
 
