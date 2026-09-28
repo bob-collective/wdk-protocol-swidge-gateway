@@ -51,7 +51,7 @@ describe('GatewaySwidge', () => {
     expect(res.hash).toBe(txid)
   })
 
-  test('swidge onramp: registerTx failure does not throw', async () => {
+  test('swidge onramp: registerTx failure throws — the gateway is the broadcaster', async () => {
     const { hex, txid } = buildMinimalTxHex()
     const account = {
       getAddress: async () => 'bc1q',
@@ -63,6 +63,46 @@ describe('GatewaySwidge', () => {
       }) as unknown as GatewayClient['registerTx'],
     })
     const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', client })
+    await expect(
+      sw.swidge({
+        fromToken: 'BTC',
+        toToken: 'USDT',
+        toChain: 'base',
+        recipient: '0xrcpt',
+        fromTokenAmount: 100000n,
+      })
+    ).rejects.toThrow(`register-tx failed for order o1: the signed bitcoin transaction ${txid}`)
+  })
+
+  test('swidge onramp: rejects a register-tx txid that is not the one signed', async () => {
+    const { hex } = buildMinimalTxHex()
+    const account = { getAddress: async () => 'bc1q', signTransaction: async () => hex }
+    const client = fakeClient({
+      registerTx: vi.fn(async () => ({
+        onramp: { txid: 'ff'.repeat(32) },
+      })) as unknown as GatewayClient['registerTx'],
+    })
+    const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', client })
+    await expect(
+      sw.swidge({
+        fromToken: 'BTC',
+        toToken: 'USDT',
+        toChain: 'base',
+        recipient: '0xrcpt',
+        fromTokenAmount: 100000n,
+      })
+    ).rejects.toThrow(/register-tx reported txid f{64} for order o1/)
+  })
+
+  test('swidge onramp: accepts the matching register-tx txid', async () => {
+    const { hex, txid } = buildMinimalTxHex()
+    const account = { getAddress: async () => 'bc1q', signTransaction: async () => hex }
+    const client = fakeClient({
+      registerTx: vi.fn(async () => ({
+        onramp: { txid },
+      })) as unknown as GatewayClient['registerTx'],
+    })
+    const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', client })
     const res = await sw.swidge({
       fromToken: 'BTC',
       toToken: 'USDT',
@@ -70,8 +110,23 @@ describe('GatewaySwidge', () => {
       recipient: '0xrcpt',
       fromTokenAmount: 100000n,
     })
-    expect(res.id).toBe('o1')
     expect(res.hash).toBe(txid)
+  })
+
+  test('swidge refuses to create an order without a refund address', async () => {
+    const client = fakeClient()
+    const sw = new GatewaySwidge({}, { fromChain: 'bitcoin', client })
+    await expect(
+      sw.swidge({
+        fromToken: 'BTC',
+        toToken: 'USDT',
+        toChain: 'base',
+        recipient: '0xrcpt',
+        fromTokenAmount: 100000n,
+      })
+    ).rejects.toThrow(/refundAddress required/)
+    expect(client.getQuote).not.toHaveBeenCalled()
+    expect(client.createOrder).not.toHaveBeenCalled()
   })
 
   test('getSwidgeStatus maps order status', async () => {
@@ -112,8 +167,7 @@ describe('GatewaySwidge', () => {
     ).rejects.toThrow('source chain unknown')
   })
 
-  test('swidge offramp: registers with srcTxHash and quote srcChain (not caller fromChain)', async () => {
-    // quote.offramp.srcChain = 'bob' overrides the caller's fromChain = 'base'
+  test('swidge offramp: sends the order tx and does not call register-tx (V4 indexes it)', async () => {
     const evmClient = fakeClient({
       getQuote: vi.fn(async () => ({
         offramp: {
@@ -138,40 +192,12 @@ describe('GatewaySwidge', () => {
       recipient: 'bc1qrcpt',
       fromTokenAmount: 1000n,
     })
-    expect(evmClient.registerTx).toHaveBeenCalledWith({
-      offramp: { order_id: 'o2', src_tx_hash: '0xtxhash', src_chain: 'bob' },
-    })
+    expect(evmClient.registerTx).not.toHaveBeenCalled()
     expect(res.id).toBe('o2')
     expect(res.hash).toBe('0xtxhash')
   })
 
-  test('swidge offramp: falls back to fromChain when quote has no srcChain', async () => {
-    const evmClient = fakeClient({
-      getQuote: vi.fn(async () => ({
-        offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' } },
-      })) as unknown as GatewayClient['getQuote'],
-      createOrder: vi.fn(async () => ({
-        offramp: { order_id: 'o2b', tx: { to: '0xto', data: '0xdata', value: '0' } },
-      })) as unknown as GatewayClient['createOrder'],
-    })
-    const account = {
-      getAddress: async () => '0xsender',
-      sendTransaction: async () => ({ hash: '0xtxhash2' }),
-    }
-    const sw = new GatewaySwidge(account, { fromChain: 'base', client: evmClient })
-    await sw.swidge({
-      fromToken: '0xtok',
-      toToken: 'BTC',
-      toChain: 'bitcoin',
-      recipient: 'bc1qrcpt',
-      fromTokenAmount: 1000n,
-    })
-    expect(evmClient.registerTx).toHaveBeenCalledWith({
-      offramp: { order_id: 'o2b', src_tx_hash: '0xtxhash2', src_chain: 'base' },
-    })
-  })
-
-  test('swidge offramp from tron: builds the contract call, registers with src_chain tron', async () => {
+  test('swidge offramp from tron: builds the contract call, returns the confirmed txid', async () => {
     const tronClient = fakeClient({
       getQuote: vi.fn(async () => ({
         offramp: {
@@ -234,10 +260,7 @@ describe('GatewaySwidge', () => {
       [],
       OWNER
     )
-    // The Tron txid goes on the wire bare — the gateway parses it with or without 0x.
-    expect(tronClient.registerTx).toHaveBeenCalledWith({
-      offramp: { order_id: 'o-tron', src_tx_hash: TRON_TXID, src_chain: 'tron' },
-    })
+    expect(tronClient.registerTx).not.toHaveBeenCalled()
     expect(res.id).toBe('o-tron')
     expect(res.hash).toBe(TRON_TXID)
   })
@@ -344,8 +367,8 @@ describe('GatewaySwidge', () => {
     expect(account.sendTransaction).not.toHaveBeenCalled()
   })
 
-  test('quoteSwidge from tron: ownerAddress is 0x-hex while sender stays Base58Check', async () => {
-    const getQuote = vi.fn(async () => ({
+  test('quoteSwidge from tron: refundAddress is the Base58Check sender, no ownerAddress', async () => {
+    const getQuote = vi.fn(async (_params: Record<string, string | undefined>) => ({
       offramp: { inputAmount: { amount: '1000000' }, outputAmount: { amount: '900' } },
     }))
     const sw = new GatewaySwidge(
@@ -360,19 +383,17 @@ describe('GatewaySwidge', () => {
       fromTokenAmount: 1000000n,
     })
     expect(getQuote).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sender: OWNER,
-        ownerAddress: '0x891cdb91d149f23b1a45d9c5ca78a88d0cb44c18',
-      })
+      expect.objectContaining({ sender: OWNER, refundAddress: OWNER })
     )
+    expect(getQuote.mock.calls[0][0]).not.toHaveProperty('ownerAddress')
   })
 
-  test('quoteSwidge onramp to tron: the Tron recipient becomes a 0x-hex ownerAddress', async () => {
-    const getQuote = vi.fn(async () => ({
+  test('quoteSwidge onramp: refundAddress is the BTC sender, not the destination recipient', async () => {
+    const getQuote = vi.fn(async (_params: Record<string, string | undefined>) => ({
       onramp: { inputAmount: { amount: '100000' }, outputAmount: { amount: '99000' } },
     }))
     const sw = new GatewaySwidge(
-      { getAddress: async () => 'bc1q' },
+      { getAddress: async () => 'bc1qsender' },
       {
         fromChain: 'bitcoin',
         client: fakeClient({ getQuote } as unknown as Partial<GatewayClient>),
@@ -386,38 +407,51 @@ describe('GatewaySwidge', () => {
       fromTokenAmount: 100000n,
     })
     expect(getQuote).toHaveBeenCalledWith(
-      expect.objectContaining({
-        recipient: OWNER,
-        ownerAddress: '0x891cdb91d149f23b1a45d9c5ca78a88d0cb44c18',
-      })
+      expect.objectContaining({ recipient: OWNER, refundAddress: 'bc1qsender' })
     )
   })
 
-  test('config.ownerAddress overrides the derived owner', async () => {
-    const getQuote = vi.fn(async () => ({
-      offramp: { inputAmount: { amount: '1000000' }, outputAmount: { amount: '900' } },
+  test('refundAddress precedence: options > config > account address', async () => {
+    const getQuote = vi.fn(async (_params: Record<string, string | undefined>) => ({
+      onramp: { inputAmount: { amount: '100000' }, outputAmount: { amount: '99000' } },
     }))
     const sw = new GatewaySwidge(
-      { getAddress: async () => OWNER },
+      { getAddress: async () => 'bc1qsender' },
       {
-        fromChain: 'tron',
-        ownerAddress: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+        fromChain: 'bitcoin',
+        refundAddress: 'bc1qconfig',
         client: fakeClient({ getQuote } as unknown as Partial<GatewayClient>),
       }
     )
-    await sw.quoteSwidge({
-      fromToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
-      toToken: 'BTC',
-      toChain: 'bitcoin',
-      recipient: 'bc1qrcpt',
-      fromTokenAmount: 1000000n,
-    })
-    expect(getQuote).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sender: OWNER,
-        ownerAddress: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-      })
-    )
+    const opts = {
+      fromToken: 'BTC',
+      toToken: '0xtok',
+      toChain: 'base',
+      recipient: '0xrcpt',
+      fromTokenAmount: 100000n,
+    }
+    await sw.quoteSwidge(opts)
+    await sw.quoteSwidge({ ...opts, refundAddress: 'bc1qcall' } as typeof opts)
+    expect(getQuote.mock.calls[0][0]).toMatchObject({ refundAddress: 'bc1qconfig' })
+    expect(getQuote.mock.calls[1][0]).toMatchObject({ refundAddress: 'bc1qcall' })
+  })
+
+  test('slippage is omitted unless configured, so the gateway picks one per route', async () => {
+    const getQuote = vi.fn(async (_params: Record<string, string | undefined>) => ({
+      onramp: { inputAmount: { amount: '100000' }, outputAmount: { amount: '99000' } },
+    }))
+    const opts = {
+      fromToken: 'BTC',
+      toToken: '0xtok',
+      toChain: 'base',
+      recipient: '0xrcpt',
+      fromTokenAmount: 100000n,
+    }
+    const client = fakeClient({ getQuote } as unknown as Partial<GatewayClient>)
+    await new GatewaySwidge({}, { fromChain: 'bitcoin', client }).quoteSwidge(opts)
+    await new GatewaySwidge({}, { fromChain: 'bitcoin', slippage: 0.01, client }).quoteSwidge(opts)
+    expect(getQuote.mock.calls[0][0].slippage).toBeUndefined()
+    expect(getQuote.mock.calls[1][0]).toMatchObject({ slippage: '100' })
   })
 
   test('getRequiredApproval: tron routes read the allowance via the account provider', async () => {
@@ -530,7 +564,7 @@ describe('GatewaySwidge attribution', () => {
     await quote(new GatewaySwidge({}, { fromChain: 'bitcoin', http }))
     expect(http.request).toHaveBeenCalledWith(
       'GET',
-      expect.stringContaining('/v3/get-quote'),
+      expect.stringContaining('/v4/get-quote'),
       expect.objectContaining({
         headers: { authorization: `Bearer ${BOB_BEARER_TOKEN}` },
       })
@@ -542,7 +576,7 @@ describe('GatewaySwidge attribution', () => {
     await quote(new GatewaySwidge({}, { fromChain: 'bitcoin', bearerToken: 'x'.repeat(32), http }))
     expect(http.request).toHaveBeenCalledWith(
       'GET',
-      expect.stringContaining('/v3/get-quote'),
+      expect.stringContaining('/v4/get-quote'),
       expect.objectContaining({
         headers: { authorization: 'Bearer ' + 'x'.repeat(32) },
       })

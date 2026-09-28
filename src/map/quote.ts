@@ -23,7 +23,7 @@ interface InnerQuote {
   priceImpact?: string | null
 }
 
-interface GatewayQuoteV3 {
+interface GatewayQuoteV4 {
   onramp?: InnerQuote
   offramp?: InnerQuote
   tokenSwap?: InnerQuote
@@ -31,9 +31,9 @@ interface GatewayQuoteV3 {
 }
 
 /**
- * Pick the inner quote object from the GatewayQuoteV3 discriminated union.
+ * Pick the inner quote object from the GatewayQuoteV4 discriminated union.
  */
-function inner(gw: GatewayQuoteV3): InnerQuote {
+function inner(gw: GatewayQuoteV4): InnerQuote {
   const q = gw.onramp || gw.offramp || gw.tokenSwap || (gw as unknown as InnerQuote)
   return q
 }
@@ -63,12 +63,12 @@ export interface LocalSwidgeQuote {
 }
 
 /**
- * Map a GatewayQuoteV3 wire object to a LocalSwidgeQuote.
+ * Map a GatewayQuoteV4 wire object to a LocalSwidgeQuote.
  *
  * Variant shapes (all camelCase on the wire):
  *  - onramp  (GatewayOnrampQuoteV2): feeBreakdown.{solverFee, protocolFee, affiliateFee, executionFee, layerzeroFee}
- *  - offramp (GatewayOfframpQuoteV3): feeBreakdown.{solverFee, inclusionFee, protocolFee, affiliateFee, fastestFeeRate}
- *  - tokenSwap (GatewayTokenSwapQuoteV2): top-level fees (always zero placeholder), no feeBreakdown
+ *  - offramp (GatewayOfframpQuoteV4): feeBreakdown.{solverFee, inclusionFee, protocolFee, affiliateFee, fastestFeeRate}
+ *  - tokenSwap (GatewayTokenSwapQuoteV4): top-level fees (always zero placeholder), no feeBreakdown
  *
  * Fee mapping:
  *  - network  ← solverFee.amount + inclusionFee.amount (either may be absent)
@@ -77,7 +77,7 @@ export interface LocalSwidgeQuote {
  *  Only included when the computed amount > 0.
  */
 export function toSwidgeQuote(
-  gatewayQuote: GatewayQuoteV3,
+  gatewayQuote: GatewayQuoteV4,
   ctx: { affiliateApplied: boolean }
 ): LocalSwidgeQuote {
   const q = inner(gatewayQuote)

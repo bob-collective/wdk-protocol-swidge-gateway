@@ -53,8 +53,10 @@ export interface QuoteParamsOptions {
 
 export interface QuoteParamsContext {
   fromAddress?: string
-  ownerAddress?: string
-  defaultSlippage: number
+  /** Source-chain encoded refund target; required by V4 create-order on every route. */
+  refundAddress?: string
+  /** Fallback when `options.slippage` is unset. Undefined → the gateway resolves it per route. */
+  defaultSlippage?: number
   affiliates?: Affiliate[]
   variant: string
 }
@@ -70,11 +72,10 @@ export function toQuoteParams(
     srcToken: resolveTokenId(options.fromToken),
     dstToken: resolveTokenId(options.toToken),
     amount: String(options.fromTokenAmount),
-    slippage: String(Math.round(slippage * 10000)),
+    slippage: slippage === undefined ? undefined : String(Math.round(slippage * 10000)),
     recipient: options.recipient,
     sender: ctx.fromAddress,
-    ownerAddress: ctx.ownerAddress,
-    refundAddress: options.refundAddress,
+    refundAddress: options.refundAddress ?? ctx.refundAddress,
   }
   if (ctx.variant !== 'tokenSwap' && ctx.affiliates && ctx.affiliates.length) {
     const s = serializeAffiliates(ctx.affiliates)

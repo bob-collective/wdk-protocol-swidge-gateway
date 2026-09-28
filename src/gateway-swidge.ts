@@ -17,7 +17,6 @@ import { bitcoinAdapter } from './chain-adapters/bitcoin.js'
 import { tronAdapter } from './chain-adapters/tron.js'
 import type { TronOpts } from './chain-adapters/tron.js'
 import { chainFamily, detectVariant } from './chains.js'
-import { toEvmAddress } from './address.js'
 import { toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
 import { toSwidgeQuote } from './map/quote.js'
@@ -25,10 +24,9 @@ import { toSwidgeStatus } from './map/status.js'
 import { toSupportedChains, toSupportedTokens } from './map/routes.js'
 import { orderPayload } from './map/order.js'
 import type { OrderPayload } from './map/order.js'
-import type { SwidgeSimulation } from './types.js'
+import type { RegisterTxV4, SwidgeSimulation } from './types.js'
 import { GatewaySwidgeError, ERR } from './errors.js'
 
-const DEFAULT_SLIPPAGE = 0.03
 const BOB_BEARER_TOKEN = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
 
 function assertPayloadFamily(payload: OrderPayload, srcFamily: string): void {
@@ -52,7 +50,12 @@ export interface GatewaySwidgeConfig {
   slippage?: number
   feeRate?: number
   fromChain?: string
-  ownerAddress?: string
+  /**
+   * Refund target for every route, encoded for the **source** chain (a Bitcoin address on an
+   * onramp, the EVM/Tron sender on an offramp or token swap). Defaults to the account's own
+   * address; a per-call `options.refundAddress` wins over both.
+   */
+  refundAddress?: string
   tronWeb?: TronOpts['tronWeb']
   tronProvider?: string
   tronConfirmTimeoutMs?: number
@@ -60,7 +63,7 @@ export interface GatewaySwidgeConfig {
 }
 
 /**
- * GatewaySwidge — concrete SwidgeProtocol backed by the BOB Gateway V3 API.
+ * GatewaySwidge — concrete SwidgeProtocol backed by the BOB Gateway V4 API.
  */
 export class GatewaySwidge extends SwidgeProtocol {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -69,10 +72,10 @@ export class GatewaySwidge extends SwidgeProtocol {
   private _client: GatewayClient
   private _affiliates: Affiliate[] | undefined
   private _paymasterToken: string | undefined
-  private _slippage: number
+  private _slippage: number | undefined
   private _feeRate: number | undefined
   private _fromChain: string | undefined
-  private _ownerAddress: string | undefined
+  private _refundAddress: string | undefined
   private _tronOpts: TronOpts
   private _spenderCache: Map<string, string>
 
@@ -96,10 +99,10 @@ export class GatewaySwidge extends SwidgeProtocol {
       })
     this._affiliates = config.affiliates
     this._paymasterToken = config.paymasterToken
-    this._slippage = config.slippage ?? DEFAULT_SLIPPAGE
+    this._slippage = config.slippage
     this._feeRate = config.feeRate
     this._fromChain = config.fromChain
-    this._ownerAddress = config.ownerAddress
+    this._refundAddress = config.refundAddress
     this._tronOpts = {
       tronWeb: config.tronWeb,
       tronProvider: config.tronProvider,
@@ -144,8 +147,10 @@ export class GatewaySwidge extends SwidgeProtocol {
       this._account && typeof this._account.getAddress === 'function'
         ? await this._account.getAddress()
         : undefined
-    const owner = this._ownerAddress ?? (variant === 'onramp' ? options.recipient : fromAddress)
-    const ownerAddress = owner === undefined ? undefined : toEvmAddress(owner)
+    // V4 refunds to the source chain on every route, so the source account is the natural
+    // default: the BTC sender on an onramp, the EVM/Tron sender otherwise. Kept in its
+    // source-chain encoding — no Tron→0x conversion (that was V3's EVM-only `ownerAddress`).
+    const refundAddress = this._refundAddress ?? fromAddress
     const params = toQuoteParams(
       {
         ...options,
@@ -155,7 +160,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       },
       {
         fromAddress,
-        ownerAddress,
+        refundAddress,
         defaultSlippage: this._slippage,
         affiliates: this._affiliates,
         variant,
@@ -192,7 +197,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     options: SwidgeOptions,
     config: Record<string, unknown> = {}
   ): Promise<SwidgeResult> {
-    const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
+    const { params, variant, srcFamily } = await this._buildQuoteParams(options)
     const { quote, payload } = await this._createOrder(params, variant, srcFamily)
     const adapter = getAdapter(srcFamily)
 
@@ -203,9 +208,13 @@ export class GatewaySwidge extends SwidgeProtocol {
         { ...payload },
         { feeRate: this._feeRate }
       )
-      await this._registerBestEffort({ onramp: { order_id: payload.orderId, bitcoin_tx_hex: hex } })
+      // V4 register-tx is the broadcast: the gateway validates, screens and submits the signed
+      // tx, and the client never broadcasts it itself. A failure here means nothing went out,
+      // so it must surface instead of handing back a txid for a transaction that doesn't exist.
+      await this._registerOnramp({ onramp: { order_id: payload.orderId, bitcoin_tx_hex: hex } }, id)
       txid = id
     } else {
+      // V4 has no offramp/tokenSwap register-tx: the gateway indexes the source tx from chain.
       const sent =
         payload.kind === 'tron'
           ? await (adapter as typeof tronAdapter).send(
@@ -220,14 +229,6 @@ export class GatewaySwidge extends SwidgeProtocol {
                 aaConfig: this._aaConfig(config),
               }
             )
-      const quoteVariant = quote[variant] as Record<string, unknown> | undefined
-      await this._registerBestEffort({
-        [variant]: {
-          order_id: payload.orderId,
-          src_tx_hash: sent.txid,
-          src_chain: (quoteVariant && quoteVariant.srcChain) || fromChain,
-        },
-      })
       txid = sent.txid
     }
 
@@ -248,6 +249,13 @@ export class GatewaySwidge extends SwidgeProtocol {
     variant: 'onramp' | 'offramp' | 'tokenSwap',
     srcFamily: string
   ): Promise<{ quote: Record<string, unknown>; payload: OrderPayload }> {
+    if (!params.refundAddress) {
+      throw new GatewaySwidgeError(
+        ERR.VALIDATION,
+        'refundAddress required: pass options.refundAddress or config.refundAddress, or use an ' +
+          'account with getAddress()'
+      )
+    }
     const quote = (await this._client.getQuote(params)) as Record<string, unknown>
     const order = (await this._client.createOrder({ [variant]: quote[variant] })) as Record<
       string,
@@ -264,14 +272,28 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /**
-   * Fire-and-forget register-tx: a registration failure must not propagate.
-   * The gateway reconciles orders from on-chain state.
+   * Hand the signed onramp tx to the gateway for broadcast, and check that the txid it reports
+   * is the one we signed.
    */
-  private async _registerBestEffort(body: unknown): Promise<void> {
+  private async _registerOnramp(body: RegisterTxV4, txid: string): Promise<void> {
+    let res: unknown
     try {
-      await this._client.registerTx(body)
-    } catch {
-      /* best-effort; order reconciles later */
+      res = await this._client.registerTx(body)
+    } catch (err) {
+      throw new GatewaySwidgeError(
+        ERR.HTTP,
+        `register-tx failed for order ${body.onramp.order_id}: the signed bitcoin transaction ` +
+          `${txid} was not broadcast`,
+        { status: (err as { status?: number })?.status, cause: err }
+      )
+    }
+    const reported = (res as { onramp?: { txid?: unknown } } | null)?.onramp?.txid
+    if (typeof reported === 'string' && reported !== txid) {
+      throw new GatewaySwidgeError(
+        ERR.HTTP,
+        `register-tx reported txid ${reported} for order ${body.onramp.order_id}, expected ${txid}`,
+        { cause: res }
+      )
     }
   }
 
@@ -280,7 +302,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    *
    * Follows the same setup as `swidge()` up through building the payload, then calls the
    * adapter's `simulate()` instead of `send()`. The Gateway order created here is orphaned
-   * (no registerTx call, no broadcast) — the gateway reconciles orphaned orders automatically.
+   * (no register-tx call, no broadcast) — the gateway reconciles orphaned orders automatically.
    *
    * Returns a `SwidgeSimulation` describing the dry-run result, including validity and gas/fee
    * estimates. `broadcast` is always `false`.
@@ -381,7 +403,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    * or null when none is needed (incl. all onramp routes).
    *
    * NOTE: on a cache miss this creates a Gateway order to discover the spender contract address
-   * (the V3 API exposes no read-only spender lookup); results are cached per route on this
+   * (the V4 API exposes no read-only spender lookup); results are cached per route on this
    * instance, so call it once per route, not before every swap.
    *
    * @param options - Route and source-token amount requiring an allowance check.

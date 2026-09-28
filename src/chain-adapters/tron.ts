@@ -445,7 +445,7 @@ export const tronAdapter = {
       throw new GatewaySwidgeError(
         ERR.HTTP,
         `the tron account broadcast returned hash ${hash}, but the transaction we built and ` +
-          `signed is ${unsigned.txID}, so that hash is not ours and must not be registered. ` +
+          `signed is ${unsigned.txID}, so that hash is not ours and must not be returned. ` +
           'Check both txids on chain before sending the same transfer again',
         { cause: result }
       )

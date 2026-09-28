@@ -5,13 +5,13 @@ import type { HttpTransport } from '../src/http.js'
 const transport = (impl: HttpTransport['request']): HttpTransport => ({ request: vi.fn(impl) })
 
 describe('GatewayClient', () => {
-  test('getQuote hits /v3/get-quote with bearer + query', async () => {
+  test('getQuote hits /v4/get-quote with bearer + query', async () => {
     const t = transport(async () => ({ status: 200, body: { onramp: {} } }))
     const c = new GatewayClient({ apiUrl: 'https://api', bearerToken: 'k'.repeat(32), http: t })
     await c.getQuote({ srcChain: 'bitcoin', amount: '1000' })
     expect(t.request).toHaveBeenCalledWith(
       'GET',
-      'https://api/v3/get-quote',
+      'https://api/v4/get-quote',
       expect.objectContaining({
         query: expect.objectContaining({ srcChain: 'bitcoin', amount: '1000' }),
         headers: { authorization: 'Bearer ' + 'k'.repeat(32) },
@@ -24,6 +24,18 @@ describe('GatewayClient', () => {
     const c = new GatewayClient({ apiUrl: 'https://api', http: t })
     await expect(c.getRoutes()).rejects.toMatchObject({ code: 'GATEWAY_HTTP_ERROR', status: 400 })
     expect(t.request).toHaveBeenCalledTimes(1)
+  })
+
+  test('a V4 error body surfaces its code and message', async () => {
+    const t = transport(async () => ({
+      status: 400,
+      body: { code: 'MISSING_REFUND_ADDRESS', error: 'refundAddress is required' },
+    }))
+    const c = new GatewayClient({ apiUrl: 'https://api', http: t })
+    await expect(c.createOrder({})).rejects.toMatchObject({
+      status: 400,
+      message: 'MISSING_REFUND_ADDRESS: refundAddress is required',
+    })
   })
 
   test('transient error (429) is retried up to maxRetries then resolves on success', async () => {
