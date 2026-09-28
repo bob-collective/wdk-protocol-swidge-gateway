@@ -18,6 +18,9 @@
  *   AMOUNT_USDT     — USDT offramp amount in smallest unit (default: 50000000 = 50 USDT)
  */
 
+import { WalletAccountBtc } from '@tetherto/wdk-wallet-btc';
+import { WalletAccountEvm } from '@tetherto/wdk-wallet-evm';
+import { WalletAccountTron } from '@tetherto/wdk-wallet-tron';
 import { describe, test, expect } from 'vitest'
 
 const RUN = !!process.env.TEST_SEED
@@ -40,12 +43,9 @@ const RUN = !!process.env.TEST_SEED
     let btcAddress: string
     let evmAddress: string
     let tronAddress: string
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let btcAccount: any
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let evmAccount: any
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let tronAccount: any
+    let btcAccount: WalletAccountBtc
+    let evmAccount: WalletAccountEvm
+    let tronAccount: WalletAccountTron
 
     // Shared setup: derive accounts from the seed once before all tests.
     // We do this inside a test rather than beforeAll so that import errors surface
