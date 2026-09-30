@@ -47,12 +47,6 @@
     "provenance": true
   },
   "packageManager": "pnpm@10.34.4",
-  "pnpm": {
-    "overrides": {
-      "brace-expansion@1": "^1.1.21",
-      "brace-expansion@5": "^5.0.12"
-    }
-  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -96,9 +90,9 @@
     "@tetherto/wdk-wallet-evm": "1.0.0-beta.15",
     "@tetherto/wdk-wallet-evm-erc-4337": "1.0.0-beta.11",
     "@tetherto/wdk-wallet-tron": "1.0.0-beta.13",
-    "@typescript-eslint/eslint-plugin": "^8",
-    "@typescript-eslint/parser": "^8",
-    "eslint": "^9",
+    "@typescript-eslint/eslint-plugin": "^8.71.0",
+    "@typescript-eslint/parser": "^8.71.0",
+    "eslint": "^9.39.5",
     "eslint-config-prettier": "^10",
     "prettier": "^3",
     "tsx": "^4.22.4",
