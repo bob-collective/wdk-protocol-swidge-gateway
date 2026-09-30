@@ -16,6 +16,7 @@ import { evmAdapter } from './chain-adapters/evm.js'
 import { bitcoinAdapter } from './chain-adapters/bitcoin.js'
 import { tronAdapter } from './chain-adapters/tron.js'
 import type { TronOpts } from './chain-adapters/tron.js'
+import type { EvmRequiredApproval } from './chain-adapters/evm.js'
 import { chainFamily, detectVariant } from './chains.js'
 import { toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
@@ -352,7 +353,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     const evm = await (adapter as typeof evmAdapter).simulate(
       this._account,
       { ...payload },
-      approvalOpts
+      { ...approvalOpts, chain: fromChain }
     )
     if (evm.requiredApproval) assertAllowanceHolderSpender(fromChain, evm.requiredApproval.spender)
     return { ...common, evm }
@@ -407,6 +408,10 @@ export class GatewaySwidge extends SwidgeProtocol {
    * (the V4 API exposes no read-only spender lookup); results are cached per route on this
    * instance, so call it once per route, not before every swap.
    *
+   * USDT on Ethereum cannot move between two non-zero allowances; when a stale non-zero allowance
+   * is in place the result carries `resetRequired: true`, and the caller must first send
+   * `approve({ token, spender, amount: 0n })`, then approve `amount`.
+   *
    * @param options - Route and source-token amount requiring an allowance check.
    * @returns Required token approval, or `null` when current allowance is sufficient or unnecessary.
    */
@@ -416,7 +421,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       toToken: string
       fromTokenAmount: bigint | string | number
     }
-  ): Promise<{ token: string; spender: string; amount: bigint } | null> {
+  ): Promise<EvmRequiredApproval | null> {
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     if (variant === 'onramp') return null
     const key = `${fromChain}:${variant}:${options.fromToken}:${options.toToken}:${(options.toChain as string) || ''}`
@@ -443,7 +448,8 @@ export class GatewaySwidge extends SwidgeProtocol {
             this._account,
             options.fromToken,
             spender,
-            options.fromTokenAmount
+            options.fromTokenAmount,
+            { chain: fromChain }
           )
     if (approval) assertAllowanceHolderSpender(fromChain, approval.spender)
     return approval

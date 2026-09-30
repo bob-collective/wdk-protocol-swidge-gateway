@@ -235,6 +235,15 @@ switch (PHASE) {
         console.log('No approval required (allowance already sufficient).')
       } else {
         logApprovalRequired(approval)
+        if (approval.resetRequired) {
+          // USDT on Ethereum can't move between two non-zero allowances: reset to 0 first.
+          console.log('Resetting existing non-zero USDT allowance to 0 first.')
+          logApprovalTx(await evmAccount.approve({ ...approval, amount: 0n }))
+          await waitForApproval(async () => {
+            const allowance = await evmAccount.getAllowance(approval.token, approval.spender)
+            return { done: allowance === 0n, detail: `allowance=${String(allowance)}  required=0` }
+          })
+        }
         logApprovalTx(await evmAccount.approve(approval))
         await waitForApproval(async () => {
           const allowance = await evmAccount.getAllowance(approval.token, approval.spender)
