@@ -132,9 +132,12 @@ if (approval) {
   // approve() resolves on broadcast, so wait for the reset to land before approving again.
   if (approval.resetRequired) {
     await account.approve({ ...approval, amount: 0n })
-    while ((await account.getAllowance(approval.token, approval.spender)) !== 0n) {
+    let reset = false
+    for (let poll = 0; poll < 3 && !reset; poll++) {
       await new Promise((resolve) => setTimeout(resolve, 5000))
+      reset = BigInt(await account.getAllowance(approval.token, approval.spender)) === 0n
     }
+    if (!reset) throw new Error('USDT allowance reset not confirmed; check the reset tx')
   }
   await account.approve(approval)
 }

@@ -240,7 +240,9 @@ switch (PHASE) {
           console.log('Resetting existing non-zero USDT allowance to 0 first.')
           logApprovalTx(await evmAccount.approve({ ...approval, amount: 0n }))
           await waitForApproval(async () => {
-            const allowance = await evmAccount.getAllowance(approval.token, approval.spender)
+            const allowance = BigInt(
+              await evmAccount.getAllowance(approval.token, approval.spender)
+            )
             return { done: allowance === 0n, detail: `allowance=${String(allowance)}  required=0` }
           })
         }
