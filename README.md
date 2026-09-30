@@ -128,8 +128,14 @@ const options = {
 // Check and grant approval first
 const approval = await sw.getRequiredApproval(options)
 if (approval) {
-  // USDT on Ethereum: a stale non-zero allowance must be reset to 0 first
-  if (approval.resetRequired) await account.approve({ ...approval, amount: 0n })
+  // USDT on Ethereum: a stale non-zero allowance must be reset to 0 first.
+  // approve() resolves on broadcast, so wait for the reset to land before approving again.
+  if (approval.resetRequired) {
+    await account.approve({ ...approval, amount: 0n })
+    while ((await account.getAllowance(approval.token, approval.spender)) !== 0n) {
+      await new Promise((resolve) => setTimeout(resolve, 5000))
+    }
+  }
   await account.approve(approval)
 }
 
