@@ -6,6 +6,7 @@ export type { TronApprovalCall } from './chain-adapters/tron.js'
 export type {
   SwidgeSimulation,
   BtcSimulateResult,
+  EvmRequiredApproval,
   EvmSimulateResult,
   TronSimulateResult,
 } from './types.js'
