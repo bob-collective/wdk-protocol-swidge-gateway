@@ -128,7 +128,19 @@ const options = {
 // Check and grant approval first
 const approval = await sw.getRequiredApproval(options)
 if (approval) {
-  await account.approve(approval.token, approval.spender, approval.amount)
+  // USDT on Ethereum: a stale non-zero allowance must be reset to 0 first.
+  // approve() resolves on broadcast, so wait for the reset to land before approving again.
+  if (approval.resetRequired) {
+    await account.approve({ ...approval, amount: 0n })
+    // 3 polls, 60s apart: ~15 Ethereum blocks for the reset to be included.
+    let reset = false
+    for (let poll = 0; poll < 3 && !reset; poll++) {
+      await new Promise((resolve) => setTimeout(resolve, 60_000))
+      reset = BigInt(await account.getAllowance(approval.token, approval.spender)) === 0n
+    }
+    if (!reset) throw new Error('USDT allowance reset not confirmed; check the reset tx')
+  }
+  await account.approve(approval)
 }
 
 const result = await sw.swidge(options)
@@ -362,7 +374,7 @@ On Tron the allowance is read with a constant-contract call through the resolved
 
 ## Known Limitations & Integration Notes
 
-- **USDT (Ethereum) approval reset:** Before an offramp of USDT-on-Ethereum, the WDK account's `approve()` throws if a non-zero allowance is already set — USDT's non-standard `approve` reverts when changing from a non-zero value. You must send `approve({ token, spender, amount: 0n })` first to reset to zero, then approve the returned amount. With unbounded approvals this only comes up when an older, exact allowance is still in place. (The underlying transaction itself is a plain ERC-20 call, so WDK's signing path is fine.)
+- **USDT (Ethereum) approval reset:** Before an offramp of USDT-on-Ethereum, the WDK account's `approve()` throws if a non-zero allowance is already set — USDT's non-standard `approve` reverts when changing from a non-zero value. `getRequiredApproval()` (and `simulateSwidge()`'s `evm.requiredApproval`) flags this case with `resetRequired: true`: send `approve({ token, spender, amount: 0n })` first to reset to zero, wait for it to land, then approve the returned amount. With unbounded approvals this only comes up when an older, exact allowance is still in place. (The underlying transaction itself is a plain ERC-20 call, so WDK's signing path is fine.)
 
 - **Approval pre-flight (`getRequiredApproval`) is a simple allowance check:** It returns an approval whenever `allowance < fromTokenAmount`. Some OFT-style receiver contracts do not require an ERC-20 approval at all; for those, approving anyway is harmless (the gateway contract ignores the allowance). The `@gobob/bob-sdk` additionally probes the receiver's `approvalRequired()` method; this module does not — it relies on the gateway to route the transaction correctly.
 

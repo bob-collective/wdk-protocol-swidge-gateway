@@ -1,6 +1,6 @@
 {
   "name": "@gobob/wdk-protocol-swidge-gateway",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Swap native BTC ⇄ USDT, USDC, ETH, wBTC, cbBTC, XAUT & tokenized stocks across Bitcoin, Ethereum, Base, Arbitrum, BSC, Tron, Robinhood Chain & more — BOB Gateway swidge module for the Tether Wallet Development Kit (WDK).",
   "type": "module",
   "author": "BOB",
@@ -78,26 +78,26 @@
     "bare-node-runtime": "*",
     "bitcoinjs-lib": "6.1.7",
     "ethers": "^6",
-    "tronweb": "^6.5.0"
+    "tronweb": "^6.5.1"
   },
   "peerDependencies": {
     "@tetherto/wdk-wallet": ">=1.0.0-beta.13 <2.0.0"
   },
   "devDependencies": {
-    "@tetherto/wdk": "1.0.0-beta.14",
-    "@tetherto/wdk-wallet": "1.0.0-beta.14",
-    "@tetherto/wdk-wallet-btc": "1.0.0-beta.11",
-    "@tetherto/wdk-wallet-evm": "1.0.0-beta.15",
-    "@tetherto/wdk-wallet-evm-erc-4337": "1.0.0-beta.11",
-    "@tetherto/wdk-wallet-tron": "1.0.0-beta.13",
-    "@typescript-eslint/eslint-plugin": "^8",
-    "@typescript-eslint/parser": "^8",
-    "eslint": "^9",
+    "@tetherto/wdk": "1.0.0-beta.18",
+    "@tetherto/wdk-wallet": "1.0.0-beta.22",
+    "@tetherto/wdk-wallet-btc": "1.0.0-beta.17",
+    "@tetherto/wdk-wallet-evm": "1.0.0-beta.19",
+    "@tetherto/wdk-wallet-evm-erc-4337": "1.0.0-beta.21",
+    "@tetherto/wdk-wallet-tron": "1.0.0-beta.15",
+    "@typescript-eslint/eslint-plugin": "^8.71.0",
+    "@typescript-eslint/parser": "^8.71.0",
+    "eslint": "^9.39.5",
     "eslint-config-prettier": "^10",
     "prettier": "^3",
     "tsx": "^4.22.4",
     "typescript": "^5",
-    "vite": "^7.3.2",
+    "vite": "^7.3.7",
     "vitest": "^4.1.11"
   },
   "license": "Apache-2.0"

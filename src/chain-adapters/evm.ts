@@ -4,6 +4,23 @@ import { MAX_UINT256 } from '../allowance-holder.js'
 const ZERO = '0x0000000000000000000000000000000000000000'
 
 /**
+ * USDT on Ethereum mainnet. Its non-standard `approve` reverts when changing a non-zero allowance
+ * to another non-zero value, and WDK's `WalletAccountEvm.approve` refuses that case up front.
+ */
+const ETHEREUM_USDT = '0xdac17f958d2ee523a2206206994597c13d831ec7'
+
+export interface EvmRequiredApproval {
+  token: string
+  spender: string
+  amount: bigint
+  /**
+   * Present (always `true`) when the current allowance must first be reset to 0 —
+   * send `approve({ token, spender, amount: 0n })` before approving `amount`.
+   */
+  resetRequired?: true
+}
+
+/**
  * Detect ERC-4337 (AA) accounts.
  * Checks the `isErc4337` flag first, then falls back to constructor name.
  *
@@ -41,7 +58,7 @@ interface EvmAccount {
 export interface EvmSimulateResult {
   tx: EvmTx
   gasEstimate: bigint | null
-  requiredApproval: { token: string; spender: string; amount: bigint } | null
+  requiredApproval: EvmRequiredApproval | null
   valid: boolean
   reason?: string
 }
@@ -54,17 +71,25 @@ export const evmAdapter = {
    * Returns null when:
    *   - tokenAddress is falsy or the zero address (native asset), or
    *   - existing allowance already covers `amount`.
+   * Sets `resetRequired` for USDT on Ethereum (`opts.chain === 'ethereum'`) when a non-zero
+   * allowance is already in place, mirroring `@gobob/bob-sdk`'s reset-approval step.
    */
   async getRequiredApproval(
     account: EvmAccount,
     tokenAddress: string,
     spender: string,
-    amount: bigint | string | number
-  ): Promise<{ token: string; spender: string; amount: bigint } | null> {
+    amount: bigint | string | number,
+    opts: { chain?: string } = {}
+  ): Promise<EvmRequiredApproval | null> {
     if (!tokenAddress || tokenAddress.toLowerCase() === ZERO) return null
-    const allowance = await account.getAllowance!(tokenAddress, spender)
-    if (BigInt(allowance) >= BigInt(amount)) return null
-    return { token: tokenAddress, spender, amount: MAX_UINT256 }
+    const allowance = BigInt(await account.getAllowance!(tokenAddress, spender))
+    if (allowance >= BigInt(amount)) return null
+    const approval = { token: tokenAddress, spender, amount: MAX_UINT256 }
+    const needsReset =
+      allowance !== 0n &&
+      opts.chain?.toLowerCase() === 'ethereum' &&
+      tokenAddress.toLowerCase() === ETHEREUM_USDT
+    return needsReset ? { ...approval, resetRequired: true } : approval
   },
 
   /**
@@ -94,7 +119,12 @@ export const evmAdapter = {
   async simulate(
     account: EvmAccount,
     payload: EvmPayload,
-    opts: { token?: string; spender?: string; amount?: bigint | string | number } = {}
+    opts: {
+      token?: string
+      spender?: string
+      amount?: bigint | string | number
+      chain?: string
+    } = {}
   ): Promise<EvmSimulateResult> {
     if (typeof account.quoteSendTransaction !== 'function') {
       throw new GatewaySwidgeError(
@@ -103,11 +133,14 @@ export const evmAdapter = {
       )
     }
     const spender = opts.spender ?? payload.tx.to
-    let requiredApproval: { token: string; spender: string; amount: bigint } | null = null
+    let requiredApproval: EvmRequiredApproval | null = null
 
     try {
-      if (opts.token != null && opts.amount != null) {
-        requiredApproval = await this.getRequiredApproval(account, opts.token, spender, opts.amount)
+      const { token, amount, chain } = opts
+      if (token != null && amount != null) {
+        requiredApproval = await this.getRequiredApproval(account, token, spender, amount, {
+          chain,
+        })
       }
       const result = await account.quoteSendTransaction(payload.tx)
       const gasEstimate = result.fee ?? result.gas ?? null

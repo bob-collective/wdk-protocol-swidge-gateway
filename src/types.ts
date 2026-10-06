@@ -3,10 +3,10 @@
 // (Hand-written: the OpenAPI components(schemas()) are not reliably emitted — see spec §10.6.)
 
 import type { BtcSimulateResult } from './chain-adapters/bitcoin.js'
-import type { EvmSimulateResult } from './chain-adapters/evm.js'
+import type { EvmRequiredApproval, EvmSimulateResult } from './chain-adapters/evm.js'
 import type { TronSimulateResult } from './chain-adapters/tron.js'
 
-export type { BtcSimulateResult, EvmSimulateResult, TronSimulateResult }
+export type { BtcSimulateResult, EvmRequiredApproval, EvmSimulateResult, TronSimulateResult }
 
 /**
  * Result of `GatewaySwidge.simulateSwidge()`.

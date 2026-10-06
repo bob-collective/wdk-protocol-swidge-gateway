@@ -59,6 +59,21 @@ describe('GatewaySwidge unbounded approvals', () => {
     )
   })
 
+  test('getRequiredApproval flags a USDT-on-Ethereum allowance reset', async () => {
+    const usdt = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
+    const account = { getAddress: async () => '0xsender', getAllowance: vi.fn(async () => 100n) }
+    const sw = new GatewaySwidge(account, {
+      fromChain: 'ethereum',
+      client: offrampClient(CANONICAL),
+    })
+    expect(await sw.getRequiredApproval({ ...route, fromToken: usdt })).toEqual({
+      token: usdt,
+      spender: CANONICAL,
+      amount: MAX_UINT256,
+      resetRequired: true,
+    })
+  })
+
   test('no approval needed → no spender check (allowance already covers the order)', async () => {
     const account = { getAddress: async () => '0xsender', getAllowance: vi.fn(async () => 500n) }
     const sw = new GatewaySwidge(account, { fromChain: 'base', client: offrampClient('0xother') })
