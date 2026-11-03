@@ -9,11 +9,7 @@ initEccLib(ecc)
 
 interface BtcAccount {
   getAddress(): string | Promise<string>
-  signTransaction?: (params: {
-    to: string
-    value: bigint
-    feeRate?: number
-  }) => Promise<string>
+  signTransaction?: (params: { to: string; value: bigint; feeRate?: number }) => Promise<string>
 }
 
 interface BtcPayload {
@@ -77,8 +73,8 @@ export const bitcoinAdapter = {
     const targetScript = btcAddress.toOutputScript(payload.address, networks.bitcoin)
     let paidToDeposit = 0n
     for (const out of parsed.outs) {
-      if ((out.script as Buffer).equals(targetScript)) {
-        paidToDeposit += BigInt(out.value)
+      if (Buffer.from(out.script).equals(targetScript)) {
+        paidToDeposit += out.value
       }
     }
     const valid = paidToDeposit >= payload.amount
