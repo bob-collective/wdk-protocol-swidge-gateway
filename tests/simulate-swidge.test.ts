@@ -28,7 +28,7 @@ function buildTxPayingDeposit(addr: string, satoshis: bigint): { hex: string; tx
   const tx = new Transaction()
   tx.addInput(Buffer.alloc(32, 0), 0) // dummy input
   const script = btcAddress.toOutputScript(addr, networks.bitcoin)
-  tx.addOutput(script, Number(satoshis))
+  tx.addOutput(script, satoshis)
   return { hex: tx.toHex(), txid: tx.getId() }
 }
 
