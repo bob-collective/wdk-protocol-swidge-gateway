@@ -74,8 +74,8 @@
     "execute-swap": "tsx scripts/execute-swap.ts"
   },
   "dependencies": {
-    "@bitcoinerlab/secp256k1": "1.2.0",
-    "bare-node-runtime": "*",
+    "@bitcoinerlab/secp256k1": "2.0.0",
+    "bare-node-runtime": "^1.5.3",
     "bitcoinjs-lib": "6.1.7",
     "ethers": "^6",
     "tronweb": "^6.5.1"
@@ -90,15 +90,15 @@
     "@tetherto/wdk-wallet-evm": "1.0.0-beta.24",
     "@tetherto/wdk-wallet-evm-erc-4337": "1.0.0-beta.24",
     "@tetherto/wdk-wallet-tron": "1.0.0-beta.17",
-    "@typescript-eslint/eslint-plugin": "^8.71.0",
-    "@typescript-eslint/parser": "^8.71.0",
-    "eslint": "^9.39.5",
+    "@typescript-eslint/eslint-plugin": "^8.72.1",
+    "@typescript-eslint/parser": "^8.72.1",
+    "eslint": "^10.14.0",
     "eslint-config-prettier": "^10",
-    "prettier": "^3",
-    "tsx": "^4.22.4",
+    "prettier": "^3.9.10",
+    "tsx": "^4.23.15",
     "typescript": "^5",
-    "vite": "^7.3.7",
-    "vitest": "^4.1.11"
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
   },
   "license": "Apache-2.0"
 }
