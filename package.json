@@ -84,12 +84,12 @@
     "@tetherto/wdk-wallet": ">=1.0.0-beta.13 <2.0.0"
   },
   "devDependencies": {
-    "@tetherto/wdk": "1.0.0-beta.18",
-    "@tetherto/wdk-wallet": "1.0.0-beta.22",
+    "@tetherto/wdk": "1.0.0-beta.22",
+    "@tetherto/wdk-wallet": "1.0.0-beta.25",
     "@tetherto/wdk-wallet-btc": "1.0.0-beta.17",
-    "@tetherto/wdk-wallet-evm": "1.0.0-beta.19",
-    "@tetherto/wdk-wallet-evm-erc-4337": "1.0.0-beta.21",
-    "@tetherto/wdk-wallet-tron": "1.0.0-beta.15",
+    "@tetherto/wdk-wallet-evm": "1.0.0-beta.24",
+    "@tetherto/wdk-wallet-evm-erc-4337": "1.0.0-beta.24",
+    "@tetherto/wdk-wallet-tron": "1.0.0-beta.17",
     "@typescript-eslint/eslint-plugin": "^8.71.0",
     "@typescript-eslint/parser": "^8.71.0",
     "eslint": "^9.39.5",
