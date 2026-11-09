@@ -15,8 +15,8 @@ function makeMockHttp() {
           status: 200,
           body: {
             onramp: {
-              inputAmount: { amount: '100000' },
-              outputAmount: { amount: '99000' },
+              inputAmount: { amount: '100000', chain: 'bitcoin' },
+              outputAmount: { amount: '99000', chain: 'base' },
               feeBreakdown: {},
             },
           },
@@ -58,8 +58,8 @@ function makeTronHttp() {
           status: 200,
           body: {
             offramp: {
-              inputAmount: { amount: '1000000' },
-              outputAmount: { amount: '950' },
+              inputAmount: { amount: '1000000', chain: 'tron' },
+              outputAmount: { amount: '950', chain: 'bitcoin' },
               srcChain: 'tron',
               feeBreakdown: {},
             },

@@ -16,7 +16,11 @@ function buildMinimalTxHex(): { hex: string; txid: string } {
 function fakeClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
   return {
     getQuote: vi.fn(async () => ({
-      onramp: { inputAmount: { amount: '100000' }, outputAmount: { amount: '99000' }, fees: {} },
+      onramp: {
+        inputAmount: { amount: '100000', chain: 'bitcoin' },
+        outputAmount: { amount: '99000', chain: 'base' },
+        fees: {},
+      },
     })),
     createOrder: vi.fn(async () => ({
       onramp: { order_id: 'o1', address: 'bc1q', inputAmount: { amount: '100000' } },
@@ -199,8 +203,8 @@ describe('GatewaySwidge', () => {
     const evmClient = fakeClient({
       getQuote: vi.fn(async () => ({
         offramp: {
-          inputAmount: { amount: '1000' },
-          outputAmount: { amount: '900' },
+          inputAmount: { amount: '1000', chain: 'base' },
+          outputAmount: { amount: '900', chain: 'bitcoin' },
           srcChain: 'base',
         },
       })) as unknown as GatewayClient['getQuote'],
@@ -229,8 +233,8 @@ describe('GatewaySwidge', () => {
     const client = fakeClient({
       getQuote: vi.fn(async () => ({
         offramp: {
-          inputAmount: { amount: '1000' },
-          outputAmount: { amount: '900' },
+          inputAmount: { amount: '1000', chain: 'base' },
+          outputAmount: { amount: '900', chain: 'bitcoin' },
           srcChain: 'bob',
         },
       })) as unknown as GatewayClient['getQuote'],
@@ -247,7 +251,7 @@ describe('GatewaySwidge', () => {
         recipient: 'bc1qrcpt',
         fromTokenAmount: 1000n,
       })
-    ).rejects.toThrow('quote is for source chain bob, but the route was requested from base')
+    ).rejects.toThrow('quote source chain bob does not match the requested base')
     expect(client.createOrder).not.toHaveBeenCalled()
   })
 
@@ -255,8 +259,8 @@ describe('GatewaySwidge', () => {
     const tronClient = fakeClient({
       getQuote: vi.fn(async () => ({
         offramp: {
-          inputAmount: { amount: '1000000' },
-          outputAmount: { amount: '900' },
+          inputAmount: { amount: '1000000', chain: 'tron' },
+          outputAmount: { amount: '900', chain: 'bitcoin' },
           srcChain: 'tron',
         },
       })) as unknown as GatewayClient['getQuote'],
@@ -323,8 +327,8 @@ describe('GatewaySwidge', () => {
     const tronClient = fakeClient({
       getQuote: vi.fn(async () => ({
         offramp: {
-          inputAmount: { amount: '1000000' },
-          outputAmount: { amount: '900' },
+          inputAmount: { amount: '1000000', chain: 'tron' },
+          outputAmount: { amount: '900', chain: 'bitcoin' },
           srcChain: 'tron',
         },
       })) as unknown as GatewayClient['getQuote'],
@@ -395,7 +399,10 @@ describe('GatewaySwidge', () => {
   ])('swidge rejects %s', async (_label, fromChain, txType, expected) => {
     const client = fakeClient({
       getQuote: vi.fn(async () => ({
-        offramp: { inputAmount: { amount: '1000000' }, outputAmount: { amount: '900' } },
+        offramp: {
+          inputAmount: { amount: '1000000', chain: fromChain },
+          outputAmount: { amount: '900', chain: 'bitcoin' },
+        },
       })) as unknown as GatewayClient['getQuote'],
       createOrder: vi.fn(async () => ({
         offramp: {
@@ -512,8 +519,8 @@ describe('GatewaySwidge', () => {
     const tronClient = fakeClient({
       getQuote: vi.fn(async () => ({
         offramp: {
-          inputAmount: { amount: '1000000' },
-          outputAmount: { amount: '900' },
+          inputAmount: { amount: '1000000', chain: 'tron' },
+          outputAmount: { amount: '900', chain: 'bitcoin' },
           srcChain: 'tron',
         },
       })) as unknown as GatewayClient['getQuote'],
@@ -548,7 +555,11 @@ describe('GatewaySwidge', () => {
   test('getRequiredApproval: caches spender per route — createOrder called at most once', async () => {
     const offrampClient = fakeClient({
       getQuote: vi.fn(async () => ({
-        offramp: { inputAmount: { amount: '500' }, outputAmount: { amount: '900' }, fees: {} },
+        offramp: {
+          inputAmount: { amount: '500', chain: 'base' },
+          outputAmount: { amount: '900', chain: 'bitcoin' },
+          fees: {},
+        },
       })) as unknown as GatewayClient['getQuote'],
       createOrder: vi.fn(async () => ({
         offramp: {

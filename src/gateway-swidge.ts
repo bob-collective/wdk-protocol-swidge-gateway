@@ -25,7 +25,7 @@ import { tronAdapter } from './chain-adapters/tron.js'
 import type { TronAccount, TronOpts } from './chain-adapters/tron.js'
 import type { EvmAccount, EvmRequiredApproval } from './chain-adapters/evm.js'
 import type { BtcAccount } from './chain-adapters/bitcoin.js'
-import { chainFamily, detectVariant } from './chains.js'
+import { CHAINS, chainFamily, detectVariant } from './chains.js'
 import { isBtcAlias, toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
 import { quoteSlippageBps, toSwidgeQuote } from './map/quote.js'
@@ -72,12 +72,33 @@ function assertQuoteVariant(quote: GatewayQuoteV4, variant: Variant): void {
 }
 
 /**
+ * Gateway chain ids compare case-insensitively (the gateway echoes `Base` back as `base`), and
+ * two spellings of one chain in `CHAINS` (`hyperevm`/`hyperliquid`) are the same chain.
+ */
+function sameChain(a: string, b: string): boolean {
+  const x = a.toLowerCase()
+  const y = b.toLowerCase()
+  return x === y || (Object.hasOwn(CHAINS, x) && CHAINS[x] === CHAINS[y])
+}
+
+/**
  * The quote must be for what was asked. create-order posts it verbatim, and an onramp signs and
  * sends the quote's `inputAmount` of BTC — so a quote for another amount, recipient, refund
- * address or token pair would execute that instead, while `minAmountOut` and the fee caps (which
- * only compare the quote against itself) still pass. The amount must be echoed; the addresses are
- * compared when echoed (the onramp quote has no `refundAddress`), case-insensitively since the
- * gateway checksums EVM addresses.
+ * address, token pair, chain pair, slippage or affiliate would execute that instead, while
+ * `minAmountOut` and the fee caps (which only compare the quote against itself) still pass.
+ *
+ * - The amount must be echoed. The addresses are compared when echoed (the onramp quote has no
+ *   `refundAddress`), case-insensitively since the gateway checksums EVM addresses.
+ * - Token addresses repeat across chains (USDT0, cbBTC, the zero address), so a token is only
+ *   pinned together with its chain: `inputAmount.chain`/`outputAmount.chain` must be echoed (every
+ *   variant carries them), and the top-level `srcChain`/`dstChain` must match when echoed (the
+ *   onramp quote has no `srcChain`, the offramp quote no `dstChain`).
+ * - A requested slippage must be echoed, and no looser: the quote's slippage sets the floor the
+ *   order executes with.
+ * - Only the affiliates sent with the request may be paid. The onramp/offramp quote echoes them as
+ *   `affiliates[]` (and the first as `affiliateAddress`), the token-swap quote as `affiliate`; none
+ *   may name an address that wasn't requested, and with none requested the fee breakdown may carry
+ *   no affiliate fee.
  */
 function assertQuoteMatchesRequest(
   quote: GatewayQuoteV4,
@@ -112,6 +133,61 @@ function assertQuoteMatchesRequest(
   for (const [field, got, want] of echoes) {
     if (got == null || want == null) continue
     if (typeof got !== 'string' || got.toLowerCase() !== want.toLowerCase()) fail(field, got, want)
+  }
+
+  const chains: [field: string, got: unknown, want: string, required: boolean][] = [
+    ['source chain', input?.chain, params.srcChain as string, true],
+    ['source chain', inner.srcChain, params.srcChain as string, false],
+    ['destination chain', output?.chain, params.dstChain as string, true],
+    ['destination chain', inner.dstChain, params.dstChain as string, false],
+  ]
+  for (const [field, got, want, required] of chains) {
+    if (got == null && !required) continue
+    if (typeof got !== 'string' || !sameChain(got, want)) fail(field, got, want)
+  }
+
+  if (params.slippage !== undefined) {
+    const bps = quoteSlippageBps(quote)
+    if (bps === null || bps > Number(params.slippage)) {
+      throw new GatewaySwidgeError(
+        ERR.VALIDATION,
+        `quote slippage ${inner.slippage} is looser than the requested ${params.slippage} bps`,
+        { cause: quote }
+      )
+    }
+  }
+
+  const requested = new Set(
+    (params.affiliates ?? '')
+      .split(',')
+      .filter(Boolean)
+      .map((a) => a.split(':')[0].toLowerCase())
+  )
+  const list = inner.affiliates
+  const affiliates = [
+    ...(list == null ? [] : Array.isArray(list) ? list : [list]),
+    ...(inner.affiliate == null ? [] : [inner.affiliate]),
+  ].map((a) => (a !== null && typeof a === 'object' ? (a as { address?: unknown }).address : a))
+  if (inner.affiliateAddress != null) affiliates.push(inner.affiliateAddress)
+  for (const address of affiliates) {
+    if (typeof address !== 'string' || !requested.has(address.toLowerCase())) {
+      throw new GatewaySwidgeError(
+        ERR.VALIDATION,
+        `quote pays affiliate ${address}, which the request did not include`,
+        { cause: quote }
+      )
+    }
+  }
+  if (requested.size === 0) {
+    const breakdown = inner.feeBreakdown as Record<string, unknown> | undefined
+    const fee = (breakdown?.affiliateFee as WireTokenAmount | undefined)?.amount
+    if (fee != null && !/^0+$/.test(String(fee))) {
+      throw new GatewaySwidgeError(
+        ERR.VALIDATION,
+        `quote charges an affiliate fee of ${fee}, but the request included no affiliates`,
+        { cause: quote }
+      )
+    }
   }
 }
 
@@ -422,7 +498,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
-   *   variant, source chain, input amount, recipient, refund address or token pair.
+   *   variant, input amount, recipient, refund address, token pair or chain pair; a slippage looser
+   *   than requested; or an affiliate fee the request did not include.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
    *   transaction.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this
@@ -524,16 +601,6 @@ export class GatewaySwidge extends SwidgeProtocol {
     }
     const quote = (await this._client.getQuote(params)) as GatewayQuoteV4
     assertQuoteVariant(quote, variant)
-    const srcChain = (quote[variant] as { srcChain?: unknown } | undefined)?.srcChain
-    if (
-      srcChain !== undefined &&
-      String(srcChain).toLowerCase() !== params.srcChain?.toLowerCase()
-    ) {
-      throw new GatewaySwidgeError(
-        ERR.VALIDATION,
-        `quote is for source chain ${srcChain}, but the route was requested from ${params.srcChain}`
-      )
-    }
     assertQuoteMatchesRequest(quote, variant, params)
     if (checks.minAmountOut !== undefined) {
       // Without the echoed slippage, toTokenAmountMin would be the bare estimate — not a floor.
@@ -631,7 +698,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
-   *   variant, source chain, input amount, recipient, refund address or token pair.
+   *   variant, input amount, recipient, refund address, token pair or chain pair; a slippage looser
+   *   than requested; or an affiliate fee the request did not include.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
    *   transaction.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this
@@ -773,7 +841,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
-   *   variant, source chain, input amount, recipient, refund address or token pair.
+   *   variant, input amount, recipient, refund address, token pair or chain pair; a slippage looser
+   *   than requested; or an affiliate fee the request did not include.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
    *   transaction.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this

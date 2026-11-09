@@ -240,6 +240,20 @@ describe('quote binding', () => {
       USDT_BASE,
       ZERO,
     ],
+    ['source chain', (q: Quote) => (q.offramp!.inputAmount.chain = 'ethereum'), 'ethereum', 'base'],
+    ['source chain', (q: Quote) => (q.offramp!.srcChain = 'bob'), 'bob', 'base'],
+    [
+      'destination chain',
+      (q: Quote) => (q.offramp!.outputAmount.chain = 'ethereum'),
+      'ethereum',
+      'bitcoin',
+    ],
+    [
+      'destination chain',
+      (q: Quote) => delete (q.offramp as { outputAmount: { chain?: string } }).outputAmount.chain,
+      'undefined',
+      'bitcoin',
+    ],
   ] as const)(
     'a quote with another %s is refused before create-order',
     async (field, mutate, got, want) => {
@@ -257,6 +271,164 @@ describe('quote binding', () => {
   test('echoed addresses compare case-insensitively (the gateway checksums EVM addresses)', async () => {
     const { sw, client } = setup()
     await sw.swidge({ ...OFFRAMP, fromToken: USDT_BASE.toLowerCase() })
+    expect(client.createOrder).toHaveBeenCalledTimes(1)
+  })
+
+  test('the right token on another destination chain is refused', async () => {
+    // USDT0 has one address on many chains, so the token echo alone cannot tell them apart.
+    const { sw, client } = setup({
+      quote: tokenSwapQuote('base', 'arbitrum'),
+      order: tokenSwapOrder(),
+    })
+    await expect(
+      sw.swidge({
+        fromToken: USDT_BASE,
+        toToken: USDT0_ARBITRUM,
+        toChain: 'ethereum',
+        recipient: '0xrcpt',
+        fromTokenAmount: 100_000_000n,
+      })
+    ).rejects.toThrow('quote destination chain arbitrum does not match the requested ethereum')
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('a top-level dstChain echo is checked alongside the output amount chain', async () => {
+    const quote = tokenSwapQuote('base', 'arbitrum')
+    quote.tokenSwap.dstChain = 'ethereum'
+    const { sw, client } = setup({ quote, order: tokenSwapOrder() })
+    await expect(
+      sw.swidge({
+        fromToken: USDT_BASE,
+        toToken: USDT0_ARBITRUM,
+        toChain: 'arbitrum',
+        recipient: '0xrcpt',
+        fromTokenAmount: 100_000_000n,
+      })
+    ).rejects.toThrow('quote destination chain ethereum does not match the requested arbitrum')
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('chains compare case-insensitively, and both spellings of HyperEVM match', async () => {
+    const quote = tokenSwapQuote('Base', 'hyperliquid')
+    const { sw, client } = setup({ quote, order: tokenSwapOrder() })
+    await sw.swidge({
+      fromToken: USDT_BASE,
+      toToken: USDT0_ARBITRUM,
+      toChain: 'hyperevm',
+      recipient: '0xrcpt',
+      fromTokenAmount: 100_000_000n,
+    })
+    expect(client.createOrder).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('slippage binding', () => {
+  test('a quote echoing a looser slippage than requested is refused before create-order', async () => {
+    const { sw, client } = setup()
+    await expect(sw.swidge({ ...OFFRAMP, slippage: 0.003 })).rejects.toThrow(
+      'quote slippage 50 is looser than the requested 30 bps'
+    )
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('the configured default slippage is bound too', async () => {
+    const { sw, client } = setup({ config: { slippage: 0.003 } })
+    await expect(sw.swidge(OFFRAMP)).rejects.toThrow('looser than the requested 30 bps')
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('a requested slippage the quote does not echo is refused', async () => {
+    const quote = offrampQuote() as { offramp: Record<string, unknown> }
+    delete quote.offramp.slippage
+    const { sw, client } = setup({ quote: quote as never })
+    await expect(sw.swidge({ ...OFFRAMP, slippage: 0.005 })).rejects.toThrow(
+      'quote slippage undefined is looser than the requested 50 bps'
+    )
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('an echo at or under the requested slippage proceeds', async () => {
+    const { sw, client } = setup()
+    await sw.swidge({ ...OFFRAMP, slippage: 0.005 })
+    await sw.swidge({ ...OFFRAMP, slippage: 0.01 })
+    expect(client.createOrder).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('affiliate binding', () => {
+  const fee = (amount: string) => ({
+    amount,
+    address: USDT_ETHEREUM,
+    chain: 'ethereum',
+    usd: '0.1',
+  })
+  const withAffiliates = (fields: Record<string, unknown>, affiliateFee = '0') => {
+    const quote = offrampQuote()
+    Object.assign(quote.offramp, fields)
+    quote.offramp.feeBreakdown.affiliateFee = fee(affiliateFee)
+    return quote as never
+  }
+
+  test.each([
+    ['an affiliates[] entry', { affiliates: [{ address: '0xevil', fee: fee('500') }] }, '500'],
+    ['affiliateAddress', { affiliateAddress: '0xevil' }, '0'],
+    ['an entry with no address', { affiliates: [{ fee: fee('500') }] }, '500'],
+  ])('with no affiliates configured, a quote paying %s is refused', async (_, fields, amount) => {
+    const { sw, client } = setup({ quote: withAffiliates(fields, amount) })
+    await expect(sw.swidge(OFFRAMP)).rejects.toThrow(/quote pays affiliate .*, which the request/)
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('with no affiliates configured, an affiliate fee is refused even with no recipient', async () => {
+    const { sw, client } = setup({ quote: withAffiliates({}, '1000') })
+    await expect(sw.swidge(OFFRAMP)).rejects.toThrow(
+      'quote charges an affiliate fee of 1000, but the request included no affiliates'
+    )
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('a token swap echoing an affiliate is refused (none is ever sent on token swaps)', async () => {
+    const quote = SAME_CHAIN_SWAP()
+    Object.assign(quote.tokenSwap, { affiliate: { address: '0xevil', bps: 100 } })
+    const { sw, client } = setup({
+      quote,
+      order: tokenSwapOrder(),
+      config: { affiliates: [{ address: '0xevil', bps: 100 }] },
+    })
+    await expect(
+      sw.swap({ tokenIn: USDT_BASE, tokenOut: USDC_BASE, tokenInAmount: 100_000_000n })
+    ).rejects.toThrow('quote pays affiliate 0xevil, which the request did not include')
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('configured affiliates are bound: an extra recipient is refused', async () => {
+    const quote = withAffiliates(
+      {
+        affiliates: [
+          { address: '0xBob', fee: fee('500') },
+          { address: '0xevil', fee: fee('500') },
+        ],
+        affiliateAddress: '0xBob',
+      },
+      '1000'
+    )
+    const { sw, client } = setup({ quote, config: { affiliates: [{ address: '0xbob', bps: 10 }] } })
+    await expect(sw.swidge(OFFRAMP)).rejects.toThrow(
+      'quote pays affiliate 0xevil, which the request did not include'
+    )
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('configured affiliates echoed back (any case) proceed', async () => {
+    const quote = withAffiliates(
+      { affiliates: [{ address: '0xBob', fee: fee('500') }], affiliateAddress: '0xBOB' },
+      '500'
+    )
+    const { sw, client } = setup({ quote, config: { affiliates: [{ address: '0xbob', bps: 10 }] } })
+    await sw.swidge(OFFRAMP)
+    expect(client.getQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ affiliates: '0xbob:10' })
+    )
     expect(client.createOrder).toHaveBeenCalledTimes(1)
   })
 
@@ -588,7 +760,6 @@ describe('bridge()', () => {
         solverFee: { amount: '300', address: USDT_BASE, chain: 'base', usd: '0' },
         executionFee: { amount: '200', address: USDT_BASE, chain: 'base', usd: '0' },
         protocolFee: { amount: '150', address: USDT_BASE, chain: 'base', usd: '0' },
-        affiliateFee: { amount: '75', address: USDT_BASE, chain: 'base', usd: '0' },
       },
     })
     const { sw, client } = setup({ quote, order: tokenSwapOrder() })
@@ -607,7 +778,7 @@ describe('bridge()', () => {
         amount: '100000000',
       })
     )
-    // network: solver 300 + execution 200; protocol: 150; affiliate is neither.
+    // network: solver 300 + execution 200; protocol: 150.
     expect(res).toEqual({ hash: 'order-swap', fee: 500n, bridgeFee: 150n })
   })
 

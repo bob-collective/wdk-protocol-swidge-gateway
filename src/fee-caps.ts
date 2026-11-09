@@ -55,10 +55,11 @@ function scaledCap(cap: string, value: unknown): bigint {
  * are compared by their gateway-reported USD values — each fee line at the top of its cent
  * rounding, the input at the bottom of its own. The check fails closed: with a cap set, a missing
  * fee breakdown on an onramp/offramp, or a missing USD value on the input or on any non-zero fee
- * it covers, refuses the swidge rather than letting the cap go unchecked. Affiliate fees are
- * configured by the integrator and are not capped. Token-swap quotes report no fee breakdown —
- * their costs are priced into the output — so the caps have nothing to check there; bound those
- * with `minAmountOut` or `slippage`.
+ * it covers, refuses the swidge rather than letting the cap go unchecked. Affiliate fees are not
+ * capped: they go to the integrator's configured affiliates, and the swidge refuses a quote that
+ * pays anyone else or charges one the request didn't ask for. Token-swap quotes report no fee
+ * breakdown — their costs are priced into the output — so the caps have nothing to check there;
+ * bound those with `minAmountOut` or `slippage`.
  *
  * @param gw - get-quote response, holding exactly the `variant` key.
  * @param variant - The route's quote variant.

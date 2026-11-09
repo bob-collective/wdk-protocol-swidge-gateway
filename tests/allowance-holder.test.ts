@@ -34,8 +34,11 @@ describe('assertAllowanceHolderSpender', () => {
 describe('GatewaySwidge unbounded approvals', () => {
   const offrampClient = (to: string): GatewayClient =>
     ({
-      getQuote: vi.fn(async () => ({
-        offramp: { inputAmount: { amount: '500' }, outputAmount: { amount: '900' } },
+      getQuote: vi.fn(async (p: Record<string, string>) => ({
+        offramp: {
+          inputAmount: { amount: '500', chain: p.srcChain },
+          outputAmount: { amount: '900', chain: p.dstChain },
+        },
       })),
       createOrder: vi.fn(async () => ({
         offramp: { order_id: 'o', tx: { to, data: '0xdata', value: '0' } },

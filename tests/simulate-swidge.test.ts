@@ -35,7 +35,11 @@ function buildTxPayingDeposit(addr: string, satoshis: bigint): { hex: string; tx
 function fakeClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
   return {
     getQuote: vi.fn(async () => ({
-      onramp: { inputAmount: { amount: '100000' }, outputAmount: { amount: '99000' }, fees: {} },
+      onramp: {
+        inputAmount: { amount: '100000', chain: 'bitcoin' },
+        outputAmount: { amount: '99000', chain: 'base' },
+        fees: {},
+      },
     })),
     createOrder: vi.fn(async () => ({
       onramp: { order_id: 'sim-order-1', address: DEPOSIT_ADDR, inputAmount: { amount: '100000' } },
@@ -50,7 +54,11 @@ function fakeClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
 function fakeEvmClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
   return {
     getQuote: vi.fn(async () => ({
-      offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, fees: {} },
+      offramp: {
+        inputAmount: { amount: '1000', chain: 'base' },
+        outputAmount: { amount: '900', chain: 'bitcoin' },
+        fees: {},
+      },
     })),
     createOrder: vi.fn(async () => ({
       offramp: {
@@ -71,8 +79,8 @@ function fakeTronClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
   return {
     getQuote: vi.fn(async () => ({
       offramp: {
-        inputAmount: { amount: '1000000' },
-        outputAmount: { amount: '900' },
+        inputAmount: { amount: '1000000', chain: 'tron' },
+        outputAmount: { amount: '900', chain: 'bitcoin' },
         srcChain: 'tron',
       },
     })),
