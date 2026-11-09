@@ -17,11 +17,8 @@ importers:
       bitcoinjs-lib:
         specifier: 6.1.7
         version: 6.1.7
-      ethers:
-        specifier: ^6
-        version: 6.17.0
       tronweb:
-        specifier: ^6.5.1
+        specifier: 6.5.1
         version: 6.5.1
     devDependencies:
       '@tetherto/wdk':
@@ -43,31 +40,34 @@ importers:
         specifier: 1.0.0-beta.17
         version: 1.0.0-beta.17(bare-abort-controller@1.1.2)(bare-buffer@3.7.1)(bare-events@2.9.2(bare-abort-controller@1.1.2))(bare-pipe@4.4.0(bare-abort-controller@1.1.2)(bare-buffer@3.7.1))(bare-tcp@2.6.1(bare-abort-controller@1.1.2)(bare-buffer@3.7.1)(bare-pipe@4.4.0(bare-abort-controller@1.1.2)(bare-buffer@3.7.1)))(bare-url@2.5.6)
       '@typescript-eslint/eslint-plugin':
-        specifier: ^8.72.1
+        specifier: 8.72.1
         version: 8.72.1(@typescript-eslint/parser@8.72.1(eslint@10.14.0)(typescript@5.9.3))(eslint@10.14.0)(typescript@5.9.3)
       '@typescript-eslint/parser':
-        specifier: ^8.72.1
+        specifier: 8.72.1
         version: 8.72.1(eslint@10.14.0)(typescript@5.9.3)
       eslint:
-        specifier: ^10.14.0
+        specifier: 10.14.0
         version: 10.14.0
       eslint-config-prettier:
-        specifier: ^10
+        specifier: 10.1.8
         version: 10.1.8(eslint@10.14.0)
+      ethers:
+        specifier: 6.17.0
+        version: 6.17.0
       prettier:
-        specifier: ^3.9.10
+        specifier: 3.9.10
         version: 3.9.10
       tsx:
-        specifier: ^4.23.15
+        specifier: 4.23.15
         version: 4.23.15
       typescript:
-        specifier: ^5
+        specifier: 5.9.3
         version: 5.9.3
       vite:
-        specifier: ^8.3.6
+        specifier: 8.3.6
         version: 8.3.6(@types/node@26.0.1)(esbuild@0.28.2)(tsx@4.23.15)
       vitest:
-        specifier: ^5.1.0
+        specifier: 5.1.0
         version: 5.1.0(@types/node@26.0.1)(vite@8.3.6(@types/node@26.0.1)(esbuild@0.28.2)(tsx@4.23.15))
 
 packages:
@@ -1408,8 +1408,8 @@ packages:
   flatted@3.4.4:
     resolution: {integrity: sha512-5+ybhBZANEJxaH3X5evAFatUxLfEHSr7n6kYJ+1Qd0mUqr4eu9gIf6GDbWHf8RJijHrjjO8G+la14SlL2SeS1Q==}
 
-  follow-redirects@1.16.0:
-    resolution: {integrity: sha512-y5rN/uOsadFT/JfYwhxRS5R7Qce+g3zG97+JrtFZlC9klX/W5hD7iiLzScI4nZqUS7DNUdhPgw4xI8W2LuXlUw==}
+  follow-redirects@1.16.3:
+    resolution: {integrity: sha512-toOSoqN6d51Wjf1aOFJYcoVv1aND9rj/CwjLU0Vz40oDuSpWDayCeKe4JpL5NL0WdFvoOOCI3BRo69HahjbR1A==}
     engines: {node: '>=4.0'}
     peerDependencies:
       debug: '*'
@@ -2601,7 +2601,7 @@ snapshots:
 
   axios@1.18.0:
     dependencies:
-      follow-redirects: 1.16.0
+      follow-redirects: 1.16.3
       form-data: 4.0.6
       https-proxy-agent: 5.0.1
       proxy-from-env: 2.1.0
@@ -3610,7 +3610,7 @@ snapshots:
 
   flatted@3.4.4: {}
 
-  follow-redirects@1.16.0: {}
+  follow-redirects@1.16.3: {}
 
   form-data@4.0.6:
     dependencies:
