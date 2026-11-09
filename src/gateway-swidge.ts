@@ -5,6 +5,7 @@ import {
   SwidgeProtocol,
   ValueError,
 } from '@tetherto/wdk-wallet/protocols'
+import type { IWalletAccount, IWalletAccountReadOnly } from '@tetherto/wdk-wallet'
 import type {
   SwidgeOptions,
   SwidgeProtocolConfig,
@@ -21,8 +22,9 @@ import { getAdapter } from './chain-adapters/registry.js'
 import { evmAdapter } from './chain-adapters/evm.js'
 import { bitcoinAdapter } from './chain-adapters/bitcoin.js'
 import { tronAdapter } from './chain-adapters/tron.js'
-import type { TronOpts } from './chain-adapters/tron.js'
-import type { EvmRequiredApproval } from './chain-adapters/evm.js'
+import type { TronAccount, TronOpts } from './chain-adapters/tron.js'
+import type { EvmAccount, EvmRequiredApproval } from './chain-adapters/evm.js'
+import type { BtcAccount } from './chain-adapters/bitcoin.js'
 import { chainFamily, detectVariant } from './chains.js'
 import { isBtcAlias, toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
@@ -131,30 +133,53 @@ function baseUnits(name: string, value: number | bigint | string): bigint {
   throw new ValueError(`${name} must be a non-negative integer amount in base units, got ${value}`)
 }
 
+/** Configuration of a `GatewaySwidge` instance. */
 export interface GatewaySwidgeConfig extends SwidgeProtocolConfig {
+  /** Gateway API base URL (default: `https://gateway-api-mainnet.gobob.xyz`). */
   apiUrl?: string
+  /** Gateway API bearer token (default: BOB's gateway-wdk attribution key). */
   bearerToken?: string
+  /** HTTP transport for gateway requests (default: one built on the global `fetch`). */
   http?: GatewayClientConfig['http']
+  /** Gateway client to use instead of building one from `apiUrl`, `bearerToken` and `http`. */
   client?: GatewayClient
+  /** Affiliate fee recipients, sent on onramp and offramp quotes (token swaps take none). */
   affiliates?: Affiliate[]
+  /** ERC-20 token an ERC-4337 account pays gas in through its paymaster. */
   paymasterToken?: string
+  /**
+   * Slippage tolerance as a fraction (`0.01` = 1%), used when a call sets none (default: the
+   * gateway picks one per route and echoes it in the quote).
+   */
   slippage?: number
+  /** Bitcoin fee rate in sat/vB for onramp transactions (default: the account's own estimate). */
   feeRate?: number
+  /** Source chain id, used when a call sets none. */
   fromChain?: string
+  /**
+   * Refund address on the source chain, used when a call sets none (default: the account's
+   * address).
+   */
   refundAddress?: string
+  /** Tron routes: tronweb instance to build calls and read allowances (default: the account's). */
   tronWeb?: TronOpts['tronWeb']
+  /** Tron routes: full-node URL to build a tronweb instance from, when `tronWeb` is unset. */
   tronProvider?: string
+  /**
+   * Tron routes: milliseconds a broadcast transaction is given to appear on the node before
+   * `swidge()` throws (default: 20,000).
+   */
   tronConfirmTimeoutMs?: number
-  [key: string]: unknown
 }
 
+/** What the chain adapters call on the account (see `GatewaySwidge#_signer`). */
+type AdapterAccount = BtcAccount & EvmAccount & TronAccount
+
 /**
- * GatewaySwidge — concrete SwidgeProtocol backed by the BOB Gateway V4 API.
+ * WDK swidge protocol over the BOB Gateway V4 API: swaps and bridges between native BTC and
+ * EVM/Tron tokens (onramp, offramp, token swap), signing only through the WDK account.
  */
 export class GatewaySwidge extends SwidgeProtocol {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  declare protected _account: any
-
   private _client: GatewayClient
   private _affiliates: Affiliate[] | undefined
   private _paymasterToken: string | undefined
@@ -166,14 +191,37 @@ export class GatewaySwidge extends SwidgeProtocol {
   private _spenderCache: Map<string, string>
 
   /**
-   * Create a BOB Gateway swidge protocol instance.
+   * Creates a gateway swidge protocol without an account. It can quote (given a `recipient`),
+   * list routes and read order status; `swidge()` throws `AccountRequiredError`.
    *
-   * @param account - WDK account used to sign and submit source-chain transactions.
-   * @param config - Gateway client, routing, fee, and chain configuration.
+   * @param account - No account.
+   * @param config - The protocol configuration.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
+   *   configuration sets neither `http` nor `client`.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(account: any, config: GatewaySwidgeConfig = {}) {
-    super(account, config)
+  constructor(account?: undefined, config?: GatewaySwidgeConfig)
+  /**
+   * Creates a gateway swidge protocol for a read-only account. Quotes default the sender, refund
+   * address and same-chain recipient to its address; `swidge()` throws `AccountRequiredError`.
+   *
+   * @param account - The read-only wallet account.
+   * @param config - The protocol configuration.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
+   *   configuration sets neither `http` nor `client`.
+   */
+  constructor(account: IWalletAccountReadOnly, config?: GatewaySwidgeConfig)
+  /**
+   * Creates a gateway swidge protocol for a wallet account, which signs and sends the source
+   * transaction of each swidge.
+   *
+   * @param account - The wallet account.
+   * @param config - The protocol configuration.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
+   *   configuration sets neither `http` nor `client`.
+   */
+  constructor(account: IWalletAccount, config?: GatewaySwidgeConfig)
+  constructor(account?: IWalletAccountReadOnly | IWalletAccount, config: GatewaySwidgeConfig = {}) {
+    super(account as IWalletAccount, config)
     this._client =
       config.client ||
       new GatewayClient({
@@ -205,7 +253,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     dstFamily: string
   } {
     const fromChain = options.fromChain || this._fromChain
-    if (!fromChain) throw new Error('source chain unknown: pass config.fromChain')
+    if (!fromChain) throw new ValueError('source chain unknown: pass config.fromChain')
     // WDK types `toChain` as `string | number`; gateway chain ids are strings.
     const toChain =
       options.toChain != null && options.toChain !== '' ? String(options.toChain) : fromChain
@@ -289,10 +337,24 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /**
-   * Request a non-binding quote for a swap, bridge, or combined route.
+   * Quotes a swidge without executing it. The quote is not binding: `swidge()` fetches its own.
    *
-   * @param options - Source asset, destination asset, amount, chains, and recipient.
-   * @returns Quote containing expected output, price impact, and fees.
+   * @param options - The swidge options.
+   * @returns The quote: amounts, the slippage floor `toTokenAmountMin`, one fee line per fee in its
+   *   own token, price impact and estimated duration.
+   * @throws {ValueError} If `toTokenAmount` is set: exact-out swidges are not supported.
+   * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
+   * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
+   *   chain.
+   * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
+   *   `bitcoin`.
+   * @throws {ValueError} If a cross-chain route has no `recipient`, or a same-chain route has
+   *   neither a `recipient` nor an account address to default to.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `config.affiliates` is invalid on an onramp
+   *   or offramp: more than 5 entries, a missing or duplicate address, a non-positive `bps`, or
+   *   more than 1000 bps in total.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
+   *   errors are retried first).
    */
   async quoteSwidge(options: SwidgeOptions): Promise<GatewaySwidgeQuote> {
     const { params, affiliateApplied } = await this._buildQuoteParams(options)
@@ -300,10 +362,21 @@ export class GatewaySwidge extends SwidgeProtocol {
     return toSwidgeQuote(gw, { affiliateApplied })
   }
 
+  /**
+   * The account as the chain adapters call it. WDK types `IWalletAccount` chain-agnostically
+   * (`signTransaction` resolves to `unknown`); the chain's own account class (`WalletAccountBtc`,
+   * `WalletAccountEvm`, `WalletAccountTron`) provides the narrower methods each adapter uses, and
+   * `_assertCanSign` checks the signing method at runtime before `swidge()` reaches an adapter.
+   */
+  private get _signer(): AdapterAccount {
+    return this._account as unknown as AdapterAccount
+  }
+
   /** Fail fast — before any gateway call — when the account cannot sign on the source chain. */
   private _assertCanSign(srcFamily: string): void {
     const method = srcFamily === 'bitcoin' ? 'signTransaction' : 'sendTransaction'
-    if (!this._account || typeof this._account[method] !== 'function') {
+    const account = this._account as Partial<Record<typeof method, unknown>> | undefined
+    if (typeof account?.[method] !== 'function') {
       throw new AccountRequiredError(
         `swidge() needs a full account that implements ${method}(); a read-only account can ` +
           'only quote'
@@ -312,12 +385,62 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /**
-   * Quote and execute a swap, bridge, or combined route.
+   * Swaps and/or bridges tokens: quotes, checks the quote, creates a gateway order, then signs
+   * and submits its source transaction. Onramps hand the signed Bitcoin transaction to the gateway,
+   * which broadcasts it; offramps and token swaps broadcast from the account. All checks run
+   * before the order is created, so a refused swidge leaves no order behind.
    *
-   * @param options - Source asset, destination asset, amount, chains, and recipient.
-   * @param config - Per-execution fee caps (override the instance's) and an optional paymaster
-   *   token.
-   * @returns Executed order ID, source transaction hash, amounts, and fees.
+   * @param options - The swidge options.
+   * @param config - Per-call fee caps, overriding the instance's cap by cap, and the paymaster
+   *   token an ERC-4337 account pays gas in.
+   * @returns The order id, the source transaction hash, the quoted amounts and the fee lines.
+   * @throws {AccountRequiredError} If the account cannot sign on the source chain: it has no
+   *   `signTransaction` (Bitcoin) or `sendTransaction` (EVM, Tron). Thrown before any gateway call.
+   * @throws {ValueError} If `toTokenAmount` is set: exact-out swidges are not supported.
+   * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
+   * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
+   *   chain.
+   * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
+   *   `bitcoin`.
+   * @throws {ValueError} If a cross-chain route has no `recipient`, or a same-chain route has
+   *   neither a `recipient` nor an account address to default to.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `config.affiliates` is invalid on an onramp
+   *   or offramp: more than 5 entries, a missing or duplicate address, a non-positive `bps`, or
+   *   more than 1000 bps in total.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
+   *   errors are retried first).
+   * @throws {ValueError} If `minAmountOut` is not a non-negative integer.
+   * @throws {ValueError} If `maxNetworkFeeBps` or `maxProtocolFeeBps` is not a finite,
+   *   non-negative number.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `minAmountOut` is set but the quote echoes
+   *   no slippage to derive its floor from.
+   * @throws {SwidgeError} `COULD_NOT_MET_THRESHOLD` if the quote's `toTokenAmountMin` is below
+   *   `minAmountOut`.
+   * @throws {MaximumFeeExceededError} If a fee exceeds `maxNetworkFeeBps` or `maxProtocolFeeBps`.
+   * @throws {MaximumFeeExceededError} If a set fee cap cannot be verified: the quote lacks the fee
+   *   breakdown or a USD price the cap needs.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
+   *   `options.refundAddress` or `config.refundAddress`, and no account address.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
+   *   variant, source chain, input amount, recipient, refund address or token pair.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
+   *   transaction.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this
+   *   module cannot sign (e.g. `solana`).
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for
+   *   another chain family than the route's.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if register-tx fails or reports another txid
+   *   than the one signed (onramp). The transaction may still have been broadcast: check the chain
+   *   or `getSwidgeStatus()` before resending.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if a Tron source has no tronweb instance
+   *   (`config.tronWeb`, `config.tronProvider` or the account's own), or its provider cannot read
+   *   transactions back.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if a Tron order call is malformed (empty
+   *   calldata, a `value` or `feeLimit` that is not a safe non-negative integer, a zero
+   *   `feeLimit`), `config.tronConfirmTimeoutMs` is invalid, or the node-built transaction differs
+   *   from the order call.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if the Tron node rejects the order call, or
+   *   the broadcast transaction is not found on the node within `tronConfirmTimeoutMs`.
    */
   async swidge(
     options: SwidgeOptions,
@@ -336,7 +459,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     let txid: string
     if (payload.kind === 'btc') {
       const { txid: id, hex } = await (adapter as typeof bitcoinAdapter).send(
-        this._account,
+        this._signer,
         { ...payload },
         { feeRate: this._feeRate }
       )
@@ -346,13 +469,9 @@ export class GatewaySwidge extends SwidgeProtocol {
       // V4 has no offramp/tokenSwap register-tx: the gateway indexes the source tx from chain.
       const sent =
         payload.kind === 'tron'
-          ? await (adapter as typeof tronAdapter).send(
-              this._account,
-              { ...payload },
-              this._tronOpts
-            )
+          ? await (adapter as typeof tronAdapter).send(this._signer, { ...payload }, this._tronOpts)
           : await (adapter as typeof evmAdapter).send(
-              this._account,
+              this._signer,
               { ...payload },
               {
                 aaConfig: this._aaConfig(config),
@@ -478,18 +597,50 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /**
-   * Validate a swidge short of broadcasting.
+   * Dry-runs a swidge: runs `swidge()`'s quote, checks and create-order, then signs (onramp) or
+   * estimates (offramp, token swap) the source transaction without broadcasting it. The gateway
+   * order this creates is never funded; the gateway reconciles such orders.
    *
-   * Follows the same setup as `swidge()` up through building the payload, then calls the
-   * adapter's `simulate()` instead of `send()`. The Gateway order created here is orphaned
-   * (no registerTx call, no broadcast) — the gateway reconciles orphaned orders automatically.
-   *
-   * Returns a `SwidgeSimulation` describing the dry-run result, including validity and gas/fee
-   * estimates. `broadcast` is always `false`.
-   *
-   * @param options - Source asset, destination asset, amount, chains, and recipient.
+   * @param options - The swidge options.
    * @param config - Per-call fee caps, as for `swidge()`.
-   * @returns Dry-run result with route-specific validity and fee estimates.
+   * @returns The dry run: the order id, the quote and, per source chain, the signed transaction
+   *   or the fee estimate, the approval still required, and whether the transaction is valid.
+   * @throws {ValueError} If `toTokenAmount` is set: exact-out swidges are not supported.
+   * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
+   * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
+   *   chain.
+   * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
+   *   `bitcoin`.
+   * @throws {ValueError} If a cross-chain route has no `recipient`, or a same-chain route has
+   *   neither a `recipient` nor an account address to default to.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `config.affiliates` is invalid on an onramp
+   *   or offramp: more than 5 entries, a missing or duplicate address, a non-positive `bps`, or
+   *   more than 1000 bps in total.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
+   *   errors are retried first).
+   * @throws {ValueError} If `minAmountOut` is not a non-negative integer.
+   * @throws {ValueError} If `maxNetworkFeeBps` or `maxProtocolFeeBps` is not a finite,
+   *   non-negative number.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `minAmountOut` is set but the quote echoes
+   *   no slippage to derive its floor from.
+   * @throws {SwidgeError} `COULD_NOT_MET_THRESHOLD` if the quote's `toTokenAmountMin` is below
+   *   `minAmountOut`.
+   * @throws {MaximumFeeExceededError} If a fee exceeds `maxNetworkFeeBps` or `maxProtocolFeeBps`.
+   * @throws {MaximumFeeExceededError} If a set fee cap cannot be verified: the quote lacks the fee
+   *   breakdown or a USD price the cap needs.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
+   *   `options.refundAddress` or `config.refundAddress`, and no account address.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
+   *   variant, source chain, input amount, recipient, refund address or token pair.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
+   *   transaction.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this
+   *   module cannot sign (e.g. `solana`).
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for
+   *   another chain family than the route's.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if an onramp's account cannot sign transactions.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an approval is due and its spender is not
+   *   the AllowanceHolder pinned for the source chain, or the chain has none pinned.
    */
   async simulateSwidge(
     options: SwidgeOptions & { fromChain?: string },
@@ -513,7 +664,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       return {
         ...common,
         onramp: await (adapter as typeof bitcoinAdapter).simulate(
-          this._account,
+          this._signer,
           { ...payload },
           { feeRate: this._feeRate }
         ),
@@ -526,7 +677,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     }
     if (payload.kind === 'tron') {
       const tron = await (adapter as typeof tronAdapter).simulate(
-        this._account,
+        this._signer,
         { ...payload },
         { ...this._tronOpts, ...approvalOpts }
       )
@@ -535,7 +686,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       return { ...common, tron }
     }
     const evm = await (adapter as typeof evmAdapter).simulate(
-      this._account,
+      this._signer,
       { ...payload },
       { ...approvalOpts, chain: fromChain }
     )
@@ -544,11 +695,14 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /**
-   * Fetch current status for a Gateway order.
+   * Returns the status of a gateway order.
    *
-   * @param id - Gateway order ID returned by `swidge()`.
-   * @param _options - Optional WDK status query settings; currently unused.
-   * @returns Mapped WDK status and route transactions.
+   * @param id - The order id `swidge()` returned.
+   * @param _options - The status options; unused.
+   * @returns The order status and every transaction hash it exposes: source, destination payouts
+   *   and refunds.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if the gateway request fails (transient
+   *   errors are retried first).
    */
   async getSwidgeStatus(id: string, _options?: SwidgeStatusOptions): Promise<SwidgeStatusResult> {
     const order = await this._client.getOrder(id)
@@ -556,9 +710,11 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /**
-   * Discover chains supported by current Gateway route matrix.
+   * Returns the chains the gateway routes from or to.
    *
-   * @returns Supported source and destination chains.
+   * @returns The supported chains, each with its name, type and native token.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if the gateway request fails (transient
+   *   errors are retried first).
    */
   async getSupportedChains(): Promise<SwidgeSupportedChain[]> {
     return toSupportedChains(
@@ -567,10 +723,13 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /**
-   * Discover tokens supported by current Gateway route matrix.
+   * Returns the tokens the gateway routes, with their symbol and decimals. Tokens this module has
+   * no metadata for are omitted.
    *
-   * @param options - Optional source-chain filter.
-   * @returns Supported tokens, optionally filtered by source chain.
+   * @param [options] - The filter: `fromChain` keeps the tokens routable from that chain.
+   * @returns The supported tokens.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if the gateway request fails (transient
+   *   errors are retried first).
    */
   async getSupportedTokens(
     options?: SwidgeSupportedTokensOptions
@@ -585,19 +744,48 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /**
-   * Returns the ERC-20/TRC-20 approval the caller must grant before an offramp/tokenSwap swidge,
-   * or null when none is needed (incl. all onramp routes).
+   * Returns the ERC-20/TRC-20 approval the account must grant before an offramp or token-swap
+   * swidge: an unbounded allowance to the gateway's AllowanceHolder.
    *
-   * NOTE: on a cache miss this creates a Gateway order to discover the spender contract address
-   * (the V4 API exposes no read-only spender lookup); results are cached per route on this
-   * instance, so call it once per route, not before every swap.
+   * On a cache miss this creates a gateway order to learn the spender (the V4 API has no
+   * read-only lookup); the spender is cached per route on this instance, so call it once per
+   * route, not before every swap.
    *
    * USDT on Ethereum cannot move between two non-zero allowances; when a stale non-zero allowance
    * is in place the result carries `resetRequired: true`, and the caller must first send
    * `approve({ token, spender, amount: 0n })`, then approve `amount`.
    *
-   * @param options - Route and source-token amount requiring an allowance check.
-   * @returns Required token approval, or `null` when current allowance is sufficient or unnecessary.
+   * @param options - The swidge options; `fromToken` and `toToken` are required.
+   * @returns The approval to grant, or `null` when the current allowance covers `fromTokenAmount`
+   *   or the route needs none (onramp, native source token).
+   * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
+   * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
+   *   chain.
+   * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
+   *   `bitcoin`.
+   * @throws {ValueError} If a cross-chain route has no `recipient`, or a same-chain route has
+   *   neither a `recipient` nor an account address to default to.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `config.affiliates` is invalid on an offramp:
+   *   more than 5 entries, a missing or duplicate address, a non-positive `bps`, or more than
+   *   1000 bps in total.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
+   *   errors are retried first).
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
+   *   `options.refundAddress` or `config.refundAddress`, and no account address.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
+   *   variant, source chain, input amount, recipient, refund address or token pair.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
+   *   transaction.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this
+   *   module cannot sign (e.g. `solana`).
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for
+   *   another chain family than the route's.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an approval is due and its spender is not
+   *   the AllowanceHolder pinned for the source chain, or the chain has none pinned.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if a Tron source has no tronweb instance
+   *   (`config.tronWeb`, `config.tronProvider` or the account's own).
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if the Tron node rejects the allowance read
+   *   or answers with anything but one 32-byte word.
    */
   async getRequiredApproval(
     options: SwidgeOptions & {
@@ -622,14 +810,14 @@ export class GatewaySwidge extends SwidgeProtocol {
     const approval =
       srcFamily === 'tron'
         ? await tronAdapter.getRequiredApproval(
-            this._account,
+            this._signer,
             options.fromToken,
             spender,
             options.fromTokenAmount,
             this._tronOpts
           )
         : await evmAdapter.getRequiredApproval(
-            this._account,
+            this._signer,
             options.fromToken,
             spender,
             options.fromTokenAmount,

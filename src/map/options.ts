@@ -20,8 +20,11 @@ export function isBtcAlias(token: unknown): boolean {
 const MAX_AFFILIATES = 5
 const MAX_TOTAL_BPS = 1000
 
+/** An affiliate fee recipient. */
 export interface Affiliate {
+  /** The address the affiliate fee is paid to. */
   address: string
+  /** The affiliate fee in basis points of the input amount. */
   bps: number
 }
 
