@@ -5,6 +5,7 @@ import {
   SwidgeProtocol,
   ValueError,
 } from '@tetherto/wdk-wallet/protocols'
+import type { IWalletAccount, IWalletAccountReadOnly } from '@tetherto/wdk-wallet'
 import type {
   SwidgeOptions,
   SwidgeProtocolConfig,
@@ -21,8 +22,9 @@ import { getAdapter } from './chain-adapters/registry.js'
 import { evmAdapter } from './chain-adapters/evm.js'
 import { bitcoinAdapter } from './chain-adapters/bitcoin.js'
 import { tronAdapter } from './chain-adapters/tron.js'
-import type { TronOpts } from './chain-adapters/tron.js'
-import type { EvmRequiredApproval } from './chain-adapters/evm.js'
+import type { TronAccount, TronOpts } from './chain-adapters/tron.js'
+import type { EvmAccount, EvmRequiredApproval } from './chain-adapters/evm.js'
+import type { BtcAccount } from './chain-adapters/bitcoin.js'
 import { chainFamily, detectVariant } from './chains.js'
 import { isBtcAlias, toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
@@ -145,16 +147,15 @@ export interface GatewaySwidgeConfig extends SwidgeProtocolConfig {
   tronWeb?: TronOpts['tronWeb']
   tronProvider?: string
   tronConfirmTimeoutMs?: number
-  [key: string]: unknown
 }
+
+/** What the chain adapters call on the account (see `GatewaySwidge#_signer`). */
+type AdapterAccount = BtcAccount & EvmAccount & TronAccount
 
 /**
  * GatewaySwidge — concrete SwidgeProtocol backed by the BOB Gateway V4 API.
  */
 export class GatewaySwidge extends SwidgeProtocol {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  declare protected _account: any
-
   private _client: GatewayClient
   private _affiliates: Affiliate[] | undefined
   private _paymasterToken: string | undefined
@@ -171,9 +172,11 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @param account - WDK account used to sign and submit source-chain transactions.
    * @param config - Gateway client, routing, fee, and chain configuration.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructor(account: any, config: GatewaySwidgeConfig = {}) {
-    super(account, config)
+  constructor(account?: undefined, config?: GatewaySwidgeConfig)
+  constructor(account: IWalletAccountReadOnly, config?: GatewaySwidgeConfig)
+  constructor(account: IWalletAccount, config?: GatewaySwidgeConfig)
+  constructor(account?: IWalletAccountReadOnly | IWalletAccount, config: GatewaySwidgeConfig = {}) {
+    super(account as IWalletAccount, config)
     this._client =
       config.client ||
       new GatewayClient({
@@ -300,10 +303,21 @@ export class GatewaySwidge extends SwidgeProtocol {
     return toSwidgeQuote(gw, { affiliateApplied })
   }
 
+  /**
+   * The account as the chain adapters call it. WDK types `IWalletAccount` chain-agnostically
+   * (`signTransaction` resolves to `unknown`); the chain's own account class (`WalletAccountBtc`,
+   * `WalletAccountEvm`, `WalletAccountTron`) provides the narrower methods each adapter uses, and
+   * `_assertCanSign` checks the signing method at runtime before `swidge()` reaches an adapter.
+   */
+  private get _signer(): AdapterAccount {
+    return this._account as unknown as AdapterAccount
+  }
+
   /** Fail fast — before any gateway call — when the account cannot sign on the source chain. */
   private _assertCanSign(srcFamily: string): void {
     const method = srcFamily === 'bitcoin' ? 'signTransaction' : 'sendTransaction'
-    if (!this._account || typeof this._account[method] !== 'function') {
+    const account = this._account as Partial<Record<typeof method, unknown>> | undefined
+    if (typeof account?.[method] !== 'function') {
       throw new AccountRequiredError(
         `swidge() needs a full account that implements ${method}(); a read-only account can ` +
           'only quote'
@@ -336,7 +350,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     let txid: string
     if (payload.kind === 'btc') {
       const { txid: id, hex } = await (adapter as typeof bitcoinAdapter).send(
-        this._account,
+        this._signer,
         { ...payload },
         { feeRate: this._feeRate }
       )
@@ -346,13 +360,9 @@ export class GatewaySwidge extends SwidgeProtocol {
       // V4 has no offramp/tokenSwap register-tx: the gateway indexes the source tx from chain.
       const sent =
         payload.kind === 'tron'
-          ? await (adapter as typeof tronAdapter).send(
-              this._account,
-              { ...payload },
-              this._tronOpts
-            )
+          ? await (adapter as typeof tronAdapter).send(this._signer, { ...payload }, this._tronOpts)
           : await (adapter as typeof evmAdapter).send(
-              this._account,
+              this._signer,
               { ...payload },
               {
                 aaConfig: this._aaConfig(config),
@@ -513,7 +523,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       return {
         ...common,
         onramp: await (adapter as typeof bitcoinAdapter).simulate(
-          this._account,
+          this._signer,
           { ...payload },
           { feeRate: this._feeRate }
         ),
@@ -526,7 +536,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     }
     if (payload.kind === 'tron') {
       const tron = await (adapter as typeof tronAdapter).simulate(
-        this._account,
+        this._signer,
         { ...payload },
         { ...this._tronOpts, ...approvalOpts }
       )
@@ -535,7 +545,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       return { ...common, tron }
     }
     const evm = await (adapter as typeof evmAdapter).simulate(
-      this._account,
+      this._signer,
       { ...payload },
       { ...approvalOpts, chain: fromChain }
     )
@@ -622,14 +632,14 @@ export class GatewaySwidge extends SwidgeProtocol {
     const approval =
       srcFamily === 'tron'
         ? await tronAdapter.getRequiredApproval(
-            this._account,
+            this._signer,
             options.fromToken,
             spender,
             options.fromTokenAmount,
             this._tronOpts
           )
         : await evmAdapter.getRequiredApproval(
-            this._account,
+            this._signer,
             options.fromToken,
             spender,
             options.fromTokenAmount,

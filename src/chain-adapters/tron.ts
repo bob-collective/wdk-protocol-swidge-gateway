@@ -66,7 +66,7 @@ export interface TronWebLike {
   }
 }
 
-interface TronAccount {
+export interface TronAccount {
   getAddress(): string | Promise<string>
   sendTransaction?: (tx: TronPrebuiltTx) => Promise<{ hash: string }>
   quoteSendTransaction?: (tx: TronPrebuiltTx) => Promise<{ fee?: bigint | number }>

@@ -1,8 +1,16 @@
 import { describe, test, expect } from 'vitest'
+import * as wdk from '@tetherto/wdk-wallet/protocols'
 import Gw, {
+  AccountRequiredError,
+  BridgeError,
   GatewaySwidge,
   GatewayClient,
   GatewaySwidgeError,
+  MaximumFeeExceededError,
+  SwapError,
+  SwidgeError,
+  SwidgeErrorReason,
+  ValueError,
   buildTronApproval,
 } from '../src/index.js'
 
@@ -28,5 +36,25 @@ describe('exports surface', () => {
         'function'
       )
     }
+  })
+
+  test('re-exports the WDK errors it throws — the same classes, so instanceof holds', () => {
+    expect([
+      AccountRequiredError,
+      BridgeError,
+      MaximumFeeExceededError,
+      SwapError,
+      SwidgeError,
+      SwidgeErrorReason,
+      ValueError,
+    ]).toEqual([
+      wdk.AccountRequiredError,
+      wdk.BridgeError,
+      wdk.MaximumFeeExceededError,
+      wdk.SwapError,
+      wdk.SwidgeError,
+      wdk.SwidgeErrorReason,
+      wdk.ValueError,
+    ])
   })
 })

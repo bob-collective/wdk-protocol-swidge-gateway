@@ -7,7 +7,7 @@ import { GatewaySwidgeError, ERR } from '../errors.js'
 // and initialize it for us — see tests/taproot-ecc.test.ts.
 initEccLib(ecc)
 
-interface BtcAccount {
+export interface BtcAccount {
   getAddress(): string | Promise<string>
   signTransaction?: (params: {
     to: string

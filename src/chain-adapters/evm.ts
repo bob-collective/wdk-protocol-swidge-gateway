@@ -48,7 +48,7 @@ interface EvmPayload {
   [key: string]: unknown
 }
 
-interface EvmAccount {
+export interface EvmAccount {
   getAllowance?: (token: string, spender: string) => Promise<bigint>
   sendTransaction: (txOrArray: EvmTx | EvmTx[], config?: unknown) => Promise<{ hash: string }>
   quoteSendTransaction?: (tx: EvmTx) => Promise<{ fee?: bigint; gas?: bigint }>
