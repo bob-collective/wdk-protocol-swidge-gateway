@@ -102,12 +102,16 @@ export function feeLines(gw: GatewayQuoteV4): FeeLine[] {
 
 /**
  * The slippage the gateway echoes in the quote, in basis points, or null when it is absent or not
- * an integer in [0, 10000]. The onramp quote sends it as a string, offramp/tokenSwap as a number.
+ * an integer in [0, 10000]. The onramp quote sends it as a string, offramp/tokenSwap as a number;
+ * a string must be plain digits (`Number('')` would otherwise read as 0 bps).
  */
 export function quoteSlippageBps(gw: GatewayQuoteV4): number | null {
   const { slippage } = innerQuote(gw)
-  const bps = Number(slippage)
-  return slippage != null && Number.isInteger(bps) && bps >= 0 && bps <= 10_000 ? bps : null
+  const bps =
+    typeof slippage === 'number' || (typeof slippage === 'string' && /^\d+$/.test(slippage))
+      ? Number(slippage)
+      : NaN
+  return Number.isInteger(bps) && bps >= 0 && bps <= 10_000 ? bps : null
 }
 
 /** `outputAmount × (1 − slippage)`; the estimate itself when the quote carries no slippage. */

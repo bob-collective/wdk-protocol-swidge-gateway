@@ -45,17 +45,24 @@ export function offrampOrder() {
   }
 }
 
-/** get-quote: 100 USDT on Base → USDT0 on Arbitrum. Token swaps carry no fee breakdown. */
-export function tokenSwapQuote(srcChain = 'base', dstChain = 'arbitrum') {
+/**
+ * get-quote: 100 USDT on Base → USDT0 on Arbitrum. Token swaps carry no fee breakdown. The quote
+ * echoes the request, so `dstToken`/`recipient` follow the route under test.
+ */
+export function tokenSwapQuote(
+  srcChain = 'base',
+  dstChain = 'arbitrum',
+  { dstToken = USDT0_ARBITRUM, recipient = '0xrcpt' } = {}
+) {
   return {
     tokenSwap: {
       srcChain,
       dstChain,
       inputAmount: { amount: '100000000', address: USDT_BASE, chain: srcChain, usd: '99.82' },
-      outputAmount: { amount: '99797888', address: USDT0_ARBITRUM, chain: dstChain, usd: '99.61' },
+      outputAmount: { amount: '99797888', address: dstToken, chain: dstChain, usd: '99.61' },
       estimatedTimeInSecs: 11,
       sender: '0xsender',
-      recipient: '0xrcpt',
+      recipient,
       slippage: 150,
       fees: { amount: '0', address: USDT_ETHEREUM, chain: 'ethereum', usd: null },
       txTo: ALLOWANCE_HOLDER,

@@ -24,7 +24,7 @@ import {
   tokenSwapQuote,
 } from './fixtures/gateway.js'
 
-type Quote = ReturnType<typeof offrampQuote> | ReturnType<typeof tokenSwapQuote>
+type Quote = Partial<ReturnType<typeof offrampQuote> & ReturnType<typeof tokenSwapQuote>>
 
 function fakeClient(quote: Quote = offrampQuote(), order: unknown = offrampOrder()) {
   return {
@@ -68,6 +68,9 @@ function setup(
 /** Base USDT → BTC, without an amount. */
 const ROUTE = { fromToken: USDT_BASE, toToken: 'BTC', toChain: 'bitcoin', recipient: 'bc1qrcpt' }
 const OFFRAMP = { ...ROUTE, fromTokenAmount: 100_000_000n }
+/** Base USDT → Base USDC, paid out to the sender. */
+const SAME_CHAIN_SWAP = () =>
+  tokenSwapQuote('base', 'base', { dstToken: USDC_BASE, recipient: '0xsender' })
 
 describe('swidge(): result', () => {
   test('returns the order id, source tx, per-token fees and the slippage floor', async () => {
@@ -118,6 +121,14 @@ describe('exact-out', () => {
     await expect(sw.quoteSwidge({ ...ROUTE, toTokenAmount: 1n })).rejects.toBeInstanceOf(ValueError)
   })
 
+  test('a non-integer fromTokenAmount is a ValueError, not a gateway 400', async () => {
+    const { sw, client } = setup()
+    await expect(sw.quoteSwidge({ ...ROUTE, fromTokenAmount: 1.5 })).rejects.toThrow(
+      new ValueError('fromTokenAmount must be a non-negative integer amount in base units, got 1.5')
+    )
+    expect(client.getQuote).not.toHaveBeenCalled()
+  })
+
   test('a missing fromTokenAmount is rejected instead of quoting amount=0', async () => {
     const { sw, client } = setup()
     // @ts-expect-error: neither amount given
@@ -158,7 +169,7 @@ describe('minAmountOut', () => {
   })
 
   test('swap() forwards it and surfaces the refusal as a SwapError', async () => {
-    const { sw } = setup({ quote: tokenSwapQuote('base', 'base'), order: tokenSwapOrder() })
+    const { sw } = setup({ quote: SAME_CHAIN_SWAP(), order: tokenSwapOrder() })
     const err = await sw
       .swap({
         tokenIn: USDT_BASE,
@@ -178,27 +189,156 @@ describe('minAmountOut', () => {
     )
   })
 
-  test('a quote without its slippage echo is refused: the estimate is not a floor', async () => {
-    const quote = offrampQuote() as { offramp: Record<string, unknown> }
-    delete quote.offramp.slippage
-    const { sw, client } = setup({ quote: quote as never })
-    await expect(sw.swidge({ ...OFFRAMP, minAmountOut: 1n })).rejects.toThrow(
-      'cannot verify minAmountOut: the quote carries no slippage to derive its minimum from'
+  test('an empty-string minAmountOut is a ValueError, not a zero floor', async () => {
+    const { sw, client } = setup()
+    await expect(sw.swidge({ ...OFFRAMP, minAmountOut: '' })).rejects.toThrow(
+      new ValueError('minAmountOut must be a non-negative integer amount in base units, got ')
+    )
+    expect(client.getQuote).not.toHaveBeenCalled()
+  })
+
+  test.each([undefined, ''])(
+    'a quote whose slippage echo is %j is refused: the estimate is not a floor',
+    async (slippage) => {
+      const quote = offrampQuote() as { offramp: Record<string, unknown> }
+      quote.offramp.slippage = slippage
+      const { sw, client } = setup({ quote: quote as never })
+      await expect(sw.swidge({ ...OFFRAMP, minAmountOut: 1n })).rejects.toThrow(
+        'cannot verify minAmountOut: the quote carries no slippage to derive its minimum from'
+      )
+      expect(client.createOrder).not.toHaveBeenCalled()
+    }
+  )
+})
+
+describe('quote binding', () => {
+  // create-order posts the quote verbatim, so a quote for anything other than the request must
+  // be refused before an order exists — minAmountOut and the fee caps only compare it to itself.
+  test.each([
+    [
+      'input amount',
+      (q: Quote) => (q.offramp!.inputAmount.amount = '1000000000'),
+      '1000000000',
+      '100000000',
+    ],
+    [
+      'recipient',
+      (q: Quote) => (q.offramp!.recipient = 'bc1qattacker'),
+      'bc1qattacker',
+      'bc1qrcpt',
+    ],
+    ['refundAddress', (q: Quote) => (q.offramp!.refundAddress = '0xother'), '0xother', '0xsender'],
+    [
+      'source token',
+      (q: Quote) => (q.offramp!.inputAmount.address = USDC_BASE),
+      USDC_BASE,
+      USDT_BASE,
+    ],
+    [
+      'destination token',
+      (q: Quote) => (q.offramp!.outputAmount.address = USDT_BASE),
+      USDT_BASE,
+      ZERO,
+    ],
+  ] as const)(
+    'a quote with another %s is refused before create-order',
+    async (field, mutate, got, want) => {
+      const quote = offrampQuote() as Quote
+      mutate(quote)
+      const { sw, client, account } = setup({ quote })
+      await expect(sw.swidge(OFFRAMP)).rejects.toThrow(
+        `quote ${field} ${got} does not match the requested ${want}`
+      )
+      expect(client.createOrder).not.toHaveBeenCalled()
+      expect((account as ReturnType<typeof evmAccount>).sendTransaction).not.toHaveBeenCalled()
+    }
+  )
+
+  test('echoed addresses compare case-insensitively (the gateway checksums EVM addresses)', async () => {
+    const { sw, client } = setup()
+    await sw.swidge({ ...OFFRAMP, fromToken: USDT_BASE.toLowerCase() })
+    expect(client.createOrder).toHaveBeenCalledTimes(1)
+  })
+
+  test('a quote carrying another variant, or two, is refused', async () => {
+    const both = { ...offrampQuote(), ...tokenSwapQuote() } as unknown as Quote
+    const { sw, client } = setup({ quote: both })
+    await expect(sw.swidge(OFFRAMP)).rejects.toThrow(
+      'expected a offramp quote, got offramp + tokenSwap'
+    )
+    await expect(setup({ quote: tokenSwapQuote() }).sw.swidge(OFFRAMP)).rejects.toThrow(
+      'expected a offramp quote, got tokenSwap'
     )
     expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('a malformed fee amount throws before anything is broadcast', async () => {
+    const quote = offrampQuote()
+    quote.offramp.feeBreakdown.solverFee.amount = '9.95'
+    const { sw, account } = setup({ quote })
+    await expect(sw.swidge(OFFRAMP)).rejects.toThrow()
+    expect((account as ReturnType<typeof evmAccount>).sendTransaction).not.toHaveBeenCalled()
+  })
+})
+
+describe("the 'BTC' alias", () => {
+  // 'BTC' maps to the zero address, which on an EVM chain is its gas token.
+  test('as toToken without toChain is refused, not swapped into the source chain gas token', async () => {
+    const { sw, client } = setup()
+    await expect(sw.swidge({ ...OFFRAMP, toChain: undefined })).rejects.toThrow(
+      new ValueError(
+        "toToken 'BTC' is native bitcoin, but the destination chain is base (toChain defaults " +
+          "to the source chain): pass toChain: 'bitcoin'"
+      )
+    )
+    expect(client.getQuote).not.toHaveBeenCalled()
+  })
+
+  test('as fromToken on a non-bitcoin source is refused', async () => {
+    const { sw } = setup()
+    await expect(
+      sw.quoteSwidge({ ...OFFRAMP, fromToken: 'btc', toToken: USDC_BASE, toChain: 'base' })
+    ).rejects.toThrow(
+      new ValueError("fromToken 'BTC' is native bitcoin, but the source chain is base")
+    )
   })
 })
 
 describe('fee caps', () => {
-  // Live quote: network fees $0 + $0.65 on a $99.82 input = 65.1 bps; no protocol fee.
+  // Live quote: network fees $0 + $0.65 on a $99.82 input; no protocol fee. USD values are
+  // rounded to the cent, so each fee line counts at +$0.005 and the input at −$0.005:
+  // $0.66 / $99.815 = 66.1 bps.
   test('maxNetworkFeeBps below the quote refuses before create-order', async () => {
     const { sw, client } = setup({ config: { maxNetworkFeeBps: 50 } })
     const err = await sw.swidge(OFFRAMP).catch((e) => e)
     expect(err).toBeInstanceOf(MaximumFeeExceededError)
     expect(err.message).toBe(
-      'network fee of 65.1 bps ($0.65 on $99.82) exceeds maxNetworkFeeBps (50)'
+      'network fee of up to 66.1 bps ($0.66 on $99.82) exceeds maxNetworkFeeBps (50)'
     )
     expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('a sub-cent fee reported as $0 still counts: fees are taken at their rounding bound', async () => {
+    // Reported: $0.65 / $99.82 = 65.1 bps — under 66. Upper bound: 66.1 bps — over.
+    const { sw, client } = setup({ config: { maxNetworkFeeBps: 66 } })
+    await expect(sw.swidge(OFFRAMP)).rejects.toBeInstanceOf(MaximumFeeExceededError)
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('a fee exactly at the cap proceeds (fixed-point, no float drift)', async () => {
+    const quote = offrampQuote()
+    quote.offramp.inputAmount.usd = '100.005'
+    quote.offramp.feeBreakdown.solverFee.amount = '0'
+    quote.offramp.feeBreakdown.inclusionFee.usd = '0.295'
+    // ($0.295 + $0.005) / ($100.005 − $0.005) = 30 bps exactly
+    await expect(
+      setup({ quote, config: { maxNetworkFeeBps: 30 } }).sw.swidge(OFFRAMP)
+    ).resolves.toMatchObject({ id: 'order-offramp' })
+    await expect(
+      setup({ quote, config: { maxNetworkFeeBps: 29.99 } }).sw.swidge(OFFRAMP)
+    ).rejects.toThrow(
+      'network fee of up to 30.0 bps ($0.3 on $100.005) exceeds maxNetworkFeeBps (29.99)'
+    )
   })
 
   test('maxNetworkFeeBps above the quote proceeds', async () => {
@@ -225,7 +365,7 @@ describe('fee caps', () => {
     const { sw, client } = setup({ quote, config: { maxProtocolFeeBps: 50 } })
     await expect(sw.swidge(OFFRAMP)).rejects.toThrow(
       new MaximumFeeExceededError(
-        'protocol fee of 200.4 bps ($2 on $99.82) exceeds maxProtocolFeeBps (50)',
+        'protocol fee of up to 200.9 bps ($2.005 on $99.82) exceeds maxProtocolFeeBps (50)',
         {}
       )
     )
@@ -240,6 +380,29 @@ describe('fee caps', () => {
       new MaximumFeeExceededError(
         'cannot verify maxNetworkFeeBps: the quote has no USD price for the bitcoin transaction ' +
           'inclusion fee',
+        {}
+      )
+    )
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
+  test('fails closed when a capped fee has an empty USD string', async () => {
+    const quote = offrampQuote()
+    quote.offramp.feeBreakdown.inclusionFee.usd = ''
+    const { sw } = setup({ quote, config: { maxNetworkFeeBps: 10_000 } })
+    await expect(sw.swidge(OFFRAMP)).rejects.toThrow(
+      'cannot verify maxNetworkFeeBps: the quote has no USD price for the bitcoin transaction ' +
+        'inclusion fee'
+    )
+  })
+
+  test('fails closed when an offramp quote has no fee breakdown', async () => {
+    const quote = offrampQuote() as { offramp: Record<string, unknown> }
+    delete quote.offramp.feeBreakdown
+    const { sw, client } = setup({ quote: quote as never, config: { maxProtocolFeeBps: 10_000 } })
+    await expect(sw.swidge(OFFRAMP)).rejects.toThrow(
+      new MaximumFeeExceededError(
+        'cannot verify maxProtocolFeeBps: the offramp quote has no fee breakdown',
         {}
       )
     )
@@ -262,17 +425,23 @@ describe('fee caps', () => {
     await expect(sw.swidge(OFFRAMP)).resolves.toMatchObject({ id: 'order-offramp' })
   })
 
-  test('a fee under an unknown breakdown key is reported as `other` and counts as network', async () => {
+  test('a fee under an unknown breakdown key is reported as `other` and counts against every cap', async () => {
     const quote = offrampQuote()
     Object.assign(quote.offramp.feeBreakdown, {
       bridgeFee: { amount: '500000', address: USDT_ETHEREUM, chain: 'ethereum', usd: '0.50' },
     })
     const { sw, client } = setup({ quote, config: { maxNetworkFeeBps: 100 } })
-    // ($0.65 + $0.50) / $99.82 = 115.2 bps
+    // ($0 + $0.65 + $0.50 + 3 × $0.005) / $99.815 = 116.7 bps
     await expect(sw.swidge(OFFRAMP)).rejects.toThrow(
-      'network fee of 115.2 bps ($1.15 on $99.82) exceeds maxNetworkFeeBps (100)'
+      'network fee of up to 116.7 bps ($1.165 on $99.82) exceeds maxNetworkFeeBps (100)'
     )
     expect(client.createOrder).not.toHaveBeenCalled()
+    // A protocol-only cap catches it too: $0.505 / $99.815 = 50.6 bps
+    await expect(
+      setup({ quote, config: { maxProtocolFeeBps: 40 } }).sw.swidge(OFFRAMP)
+    ).rejects.toThrow(
+      'protocol fee of up to 50.6 bps ($0.505 on $99.82) exceeds maxProtocolFeeBps (40)'
+    )
     const q = await setup({ quote }).sw.quoteSwidge(OFFRAMP)
     expect(q.fees.at(-1)).toEqual({
       type: 'other',
@@ -306,7 +475,12 @@ describe('fee caps', () => {
       order: tokenSwapOrder(),
       config: { maxNetworkFeeBps: 0, maxProtocolFeeBps: 0 },
     })
-    await sw.swidge({ ...OFFRAMP, toToken: USDT0_ARBITRUM, toChain: 'arbitrum', recipient: '0xr' })
+    await sw.swidge({
+      ...OFFRAMP,
+      toToken: USDT0_ARBITRUM,
+      toChain: 'arbitrum',
+      recipient: '0xrcpt',
+    })
     expect(client.createOrder).toHaveBeenCalledTimes(1)
   })
 })
@@ -357,14 +531,11 @@ describe('read-only accounts', () => {
 
 describe('recipient', () => {
   test('a same-chain swap() without `to` pays out to the sender', async () => {
-    const { sw, client } = setup({
-      quote: tokenSwapQuote('base', 'base'),
-      order: tokenSwapOrder(),
-    })
+    const { sw, client } = setup({ quote: SAME_CHAIN_SWAP(), order: tokenSwapOrder() })
     const res = await sw.swap({
       tokenIn: USDT_BASE,
       tokenOut: USDC_BASE,
-      tokenInAmount: 1_000_000n,
+      tokenInAmount: 100_000_000n,
     })
     expect(client.getQuote).toHaveBeenCalledWith(
       expect.objectContaining({ srcChain: 'base', dstChain: 'base', recipient: '0xsender' })
@@ -409,7 +580,18 @@ describe('chain ids', () => {
 
 describe('bridge()', () => {
   test('bridges via swidge and splits network vs protocol fees', async () => {
-    const { sw, client } = setup({ quote: tokenSwapQuote(), order: tokenSwapOrder() })
+    // WDK's bridge() asks for the same token address on the target chain. Real token-swap quotes
+    // carry no fee breakdown; one is added here so the network/protocol split has lines to sort.
+    const quote = tokenSwapQuote('base', 'arbitrum', { dstToken: USDT_BASE })
+    Object.assign(quote.tokenSwap, {
+      feeBreakdown: {
+        solverFee: { amount: '300', address: USDT_BASE, chain: 'base', usd: '0' },
+        executionFee: { amount: '200', address: USDT_BASE, chain: 'base', usd: '0' },
+        protocolFee: { amount: '150', address: USDT_BASE, chain: 'base', usd: '0' },
+        affiliateFee: { amount: '75', address: USDT_BASE, chain: 'base', usd: '0' },
+      },
+    })
+    const { sw, client } = setup({ quote, order: tokenSwapOrder() })
     const res = await sw.bridge({
       token: USDT_BASE,
       targetChain: 'arbitrum',
@@ -425,7 +607,8 @@ describe('bridge()', () => {
         amount: '100000000',
       })
     )
-    expect(res).toEqual({ hash: 'order-swap', fee: 0n, bridgeFee: 0n })
+    // network: solver 300 + execution 200; protocol: 150; affiliate is neither.
+    expect(res).toEqual({ hash: 'order-swap', fee: 500n, bridgeFee: 150n })
   })
 
   test('quoteBridge without a recipient is a ValueError, not a gateway 400', async () => {

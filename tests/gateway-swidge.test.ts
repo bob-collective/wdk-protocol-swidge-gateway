@@ -548,7 +548,7 @@ describe('GatewaySwidge', () => {
   test('getRequiredApproval: caches spender per route — createOrder called at most once', async () => {
     const offrampClient = fakeClient({
       getQuote: vi.fn(async () => ({
-        offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, fees: {} },
+        offramp: { inputAmount: { amount: '500' }, outputAmount: { amount: '900' }, fees: {} },
       })) as unknown as GatewayClient['getQuote'],
       createOrder: vi.fn(async () => ({
         offramp: {

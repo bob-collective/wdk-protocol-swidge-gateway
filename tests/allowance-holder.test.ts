@@ -35,7 +35,7 @@ describe('GatewaySwidge unbounded approvals', () => {
   const offrampClient = (to: string): GatewayClient =>
     ({
       getQuote: vi.fn(async () => ({
-        offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' } },
+        offramp: { inputAmount: { amount: '500' }, outputAmount: { amount: '900' } },
       })),
       createOrder: vi.fn(async () => ({
         offramp: { order_id: 'o', tx: { to, data: '0xdata', value: '0' } },

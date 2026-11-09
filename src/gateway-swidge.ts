@@ -24,10 +24,10 @@ import { tronAdapter } from './chain-adapters/tron.js'
 import type { TronOpts } from './chain-adapters/tron.js'
 import type { EvmRequiredApproval } from './chain-adapters/evm.js'
 import { chainFamily, detectVariant } from './chains.js'
-import { toQuoteParams } from './map/options.js'
+import { isBtcAlias, toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
 import { quoteSlippageBps, toSwidgeQuote } from './map/quote.js'
-import type { GatewayQuoteV4, GatewaySwidgeQuote } from './map/quote.js'
+import type { GatewayQuoteV4, GatewaySwidgeQuote, WireTokenAmount } from './map/quote.js'
 import { assertFeeCaps } from './fee-caps.js'
 import { toSwidgeStatus } from './map/status.js'
 import { toSupportedChains, toSupportedTokens } from './map/routes.js'
@@ -50,6 +50,69 @@ function assertPayloadFamily(payload: OrderPayload, srcFamily: string): void {
   }
 }
 
+const VARIANTS = ['onramp', 'offramp', 'tokenSwap'] as const
+type Variant = (typeof VARIANTS)[number]
+
+/**
+ * The quote must carry exactly the requested variant: the checks read whichever variant key is
+ * present, while create-order posts `quote[variant]` — two keys would let them see different
+ * quotes.
+ */
+function assertQuoteVariant(quote: GatewayQuoteV4, variant: Variant): void {
+  const present = VARIANTS.filter((v) => quote[v] != null)
+  if (present.length !== 1 || present[0] !== variant || typeof quote[variant] !== 'object') {
+    throw new GatewaySwidgeError(
+      ERR.VALIDATION,
+      `expected a ${variant} quote, got ${present.join(' + ') || 'none'}`,
+      { cause: quote }
+    )
+  }
+}
+
+/**
+ * The quote must be for what was asked. create-order posts it verbatim, and an onramp signs and
+ * sends the quote's `inputAmount` of BTC — so a quote for another amount, recipient, refund
+ * address or token pair would execute that instead, while `minAmountOut` and the fee caps (which
+ * only compare the quote against itself) still pass. The amount must be echoed; the addresses are
+ * compared when echoed (the onramp quote has no `refundAddress`), case-insensitively since the
+ * gateway checksums EVM addresses.
+ */
+function assertQuoteMatchesRequest(
+  quote: GatewayQuoteV4,
+  variant: Variant,
+  params: Record<string, string | undefined>
+): void {
+  const inner = quote[variant] as unknown as Record<string, unknown>
+  const input = inner.inputAmount as WireTokenAmount | undefined
+  const output = inner.outputAmount as WireTokenAmount | undefined
+  const fail = (field: string, got: unknown, want: unknown): never => {
+    throw new GatewaySwidgeError(
+      ERR.VALIDATION,
+      `quote ${field} ${got} does not match the requested ${want}`,
+      { cause: quote }
+    )
+  }
+  let amount: bigint | undefined
+  try {
+    amount = BigInt(input?.amount as string)
+  } catch {
+    // fall through
+  }
+  if (amount === undefined || amount !== BigInt(params.amount as string)) {
+    fail('input amount', input?.amount, params.amount)
+  }
+  const echoes: [field: string, got: unknown, want: string | undefined][] = [
+    ['recipient', inner.recipient, params.recipient],
+    ['refundAddress', inner.refundAddress, params.refundAddress],
+    ['source token', input?.address, params.srcToken],
+    ['destination token', output?.address, params.dstToken],
+  ]
+  for (const [field, got, want] of echoes) {
+    if (got == null || want == null) continue
+    if (typeof got !== 'string' || got.toLowerCase() !== want.toLowerCase()) fail(field, got, want)
+  }
+}
+
 /** Checks run on the quote before create-order, so a refused swidge leaves no orphaned order. */
 interface OrderChecks {
   minAmountOut?: bigint
@@ -59,7 +122,8 @@ interface OrderChecks {
 /** Parse an integer base-unit amount option, or throw `ValueError` naming it. */
 function baseUnits(name: string, value: number | bigint | string): bigint {
   try {
-    const n = BigInt(value)
+    // BigInt('') is 0n — an empty string must not read as a zero amount.
+    const n = typeof value === 'string' && value.trim() === '' ? -1n : BigInt(value)
     if (n >= 0n) return n
   } catch {
     // fall through
@@ -169,7 +233,23 @@ export class GatewaySwidge extends SwidgeProtocol {
       )
     }
     if (options.fromTokenAmount == null) throw new ValueError('fromTokenAmount is required')
+    const fromTokenAmount = baseUnits('fromTokenAmount', options.fromTokenAmount)
     const { fromChain, toChain, srcFamily, dstFamily } = this._resolveChains(options)
+    // 'BTC' resolves to the zero address, which on any other chain is that chain's native gas
+    // token — so a 'BTC' toToken with toChain left to default to an EVM source would swap into ETH.
+    if (isBtcAlias(options.fromToken) && srcFamily !== 'bitcoin') {
+      throw new ValueError(
+        `fromToken 'BTC' is native bitcoin, but the source chain is ${fromChain}`
+      )
+    }
+    if (isBtcAlias(options.toToken) && dstFamily !== 'bitcoin') {
+      throw new ValueError(
+        `toToken 'BTC' is native bitcoin, but the destination chain is ${toChain}` +
+          (options.toChain == null || options.toChain === ''
+            ? " (toChain defaults to the source chain): pass toChain: 'bitcoin'"
+            : '')
+      )
+    }
     const variant = detectVariant({ srcFamily, dstFamily })
     const fromAddress =
       this._account && typeof this._account.getAddress === 'function'
@@ -194,7 +274,7 @@ export class GatewaySwidge extends SwidgeProtocol {
         fromChain,
         toChain,
         recipient,
-        fromTokenAmount: options.fromTokenAmount,
+        fromTokenAmount,
       },
       {
         fromAddress,
@@ -249,6 +329,8 @@ export class GatewaySwidge extends SwidgeProtocol {
       minAmountOut: this._minAmountOut(options),
       caps: this._caps(config),
     })
+    // Map the result before broadcasting: a malformed quote must throw while failing is free.
+    const sq = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
     const adapter = getAdapter(srcFamily)
 
     let txid: string
@@ -279,7 +361,6 @@ export class GatewaySwidge extends SwidgeProtocol {
       txid = sent.txid
     }
 
-    const sq = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
     return {
       id: payload.orderId,
       hash: txid,
@@ -323,6 +404,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       )
     }
     const quote = (await this._client.getQuote(params)) as GatewayQuoteV4
+    assertQuoteVariant(quote, variant)
     const srcChain = (quote[variant] as { srcChain?: unknown } | undefined)?.srcChain
     if (
       srcChain !== undefined &&
@@ -333,6 +415,7 @@ export class GatewaySwidge extends SwidgeProtocol {
         `quote is for source chain ${srcChain}, but the route was requested from ${params.srcChain}`
       )
     }
+    assertQuoteMatchesRequest(quote, variant, params)
     if (checks.minAmountOut !== undefined) {
       // Without the echoed slippage, toTokenAmountMin would be the bare estimate — not a floor.
       if (quoteSlippageBps(quote) === null) {
@@ -351,7 +434,7 @@ export class GatewaySwidge extends SwidgeProtocol {
         )
       }
     }
-    if (checks.caps) assertFeeCaps(quote, checks.caps)
+    if (checks.caps) assertFeeCaps(quote, variant, checks.caps)
     const order = (await this._client.createOrder({ [variant]: quote[variant] })) as Record<
       string,
       unknown

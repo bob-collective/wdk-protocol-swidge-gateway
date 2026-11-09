@@ -303,7 +303,7 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 | `config.tronWeb`        | `object?`                                | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. Defaults to the account's own provider. |
 | `config.tronProvider`   | `string?`                                | Tron source routes only. Full-node URL to build a tronweb client from.                                                                     |
 | `config.tronConfirmTimeoutMs` | `number?`                          | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node — finite, `>= 0` (default `20000` ms).       |
-| `config.maxNetworkFeeBps`  | `number \| bigint?`                     | Refuse a `swidge()` whose network fees exceed this many bps of the input (compared in USD; fails closed without a price).                 |
+| `config.maxNetworkFeeBps`  | `number \| bigint?`                     | Refuse a `swidge()` whose network fees exceed this many bps of the input (compared in USD; fails closed without a price). Not checked on token swaps, which report no fees. |
 | `config.maxProtocolFeeBps` | `number \| bigint?`                     | Same, for the Gateway protocol fee.                                                                                                        |
 
 Gateway V4 requires a `refundAddress` on every route before it will create an order (`MISSING_REFUND_ADDRESS` otherwise), encoded for the **source** chain: a Bitcoin address on an onramp, the EVM `0x…` or Tron Base58Check sender on an offramp or token swap. The module defaults it to the account's own address — the wallet the funds leave from — so a failed order refunds to where it came from. Set `config.refundAddress` (or `refundAddress` per call) to refund elsewhere on the same source chain. V3's `ownerAddress` no longer exists.
@@ -313,7 +313,7 @@ Gateway V4 requires a `refundAddress` on every route before it will create an or
 | Field             | Type      | Required | Description                                                                                                                                                                                            |
 | ----------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `fromToken`       | `string`  | Yes      | Source token: pass `'BTC'` (or the exported `BTC` constant) for Bitcoin — normalised internally to the gateway's native-token zero-address. ERC-20/TRC-20 tokens are passed as their contract address. |
-| `toToken`         | `string`  | Yes      | Destination token: pass `'BTC'` (or `BTC` constant) for Bitcoin, or a contract address for ERC-20/TRC-20 tokens.                                                                                       |
+| `toToken`         | `string`  | Yes      | Destination token: pass `'BTC'` (or `BTC` constant) for Bitcoin — with `toChain: 'bitcoin'` (`ValueError` otherwise) — or a contract address for ERC-20/TRC-20 tokens.                             |
 | `toChain`         | `string`  | No       | Destination chain id (e.g. `'base'`, `'bitcoin'`, `'tron'`). Defaults to the source chain.                                                                                                             |
 | `recipient`       | `string`  | Cross-chain | Recipient address on the destination chain. Defaults to the sender on a same-chain swap; required (else `ValueError`) on cross-chain routes.                                                        |
 | `fromTokenAmount` | `bigint`  | Yes      | Amount to send (in the token's smallest unit). Exact-out (`toTokenAmount`) is not supported and throws `ValueError`.                                                                                   |
@@ -329,7 +329,7 @@ Returns a quote without executing a transaction. Useful for displaying expected 
 
 #### `swidge(options, config?) → Promise<SwidgeResult>`
 
-Executes a swidge. `config` takes per-call `maxNetworkFeeBps` / `maxProtocolFeeBps` and `paymasterToken`. Throws `AccountRequiredError` up front for an account that cannot sign; checks `minAmountOut` and the fee caps before creating the order. Returns:
+Executes a swidge. `config` takes per-call `maxNetworkFeeBps` / `maxProtocolFeeBps` and `paymasterToken`. Throws `AccountRequiredError` up front for an account that cannot sign; before creating the order, checks that the quote matches the request (amount, recipient, refund address, tokens), then `minAmountOut` and the fee caps. Returns:
 
 | Field              | Type                  | Description                                     |
 | ------------------ | --------------------- | ----------------------------------------------- |
