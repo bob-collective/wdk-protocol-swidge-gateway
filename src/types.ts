@@ -8,17 +8,15 @@ import type { TronSimulateResult } from './chain-adapters/tron.js'
 
 export type { BtcSimulateResult, EvmRequiredApproval, EvmSimulateResult, TronSimulateResult }
 
-/**
- * Result of `GatewaySwidge.simulateSwidge()`.
- *
- * `broadcast` is always `false` — no transaction was sent, no registerTx called.
- * An orphaned Gateway order is created as a side-effect (the gateway reconciles these).
- */
+/** Result of `GatewaySwidge.simulateSwidge()`, keyed by the source chain's dry run. */
 export type SwidgeSimulation = {
+  /** The route: `onramp` (BTC → token), `offramp` (token → BTC) or `tokenSwap`. */
   variant: 'onramp' | 'offramp' | 'tokenSwap'
+  /** The id of the gateway order created for the dry run; it is never funded. */
   orderId: string
-  /** Mapped quote (same shape as `quoteSwidge` output). */
+  /** The quote, as `quoteSwidge()` returns it. */
   quote: Record<string, unknown>
+  /** Always `false`: nothing was broadcast or registered. */
   broadcast: false
 } & ({ onramp: BtcSimulateResult } | { evm: EvmSimulateResult } | { tron: TronSimulateResult })
 
