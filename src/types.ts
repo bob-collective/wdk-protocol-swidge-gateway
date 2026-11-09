@@ -42,21 +42,46 @@ export interface RegisterTxV4 {
   onramp: { order_id: string; bitcoin_tx_hex: string }
 }
 
-// Discriminated by the present key
+/**
+ * `GatewayUserTokenTransferV3`. A standalone camelCase struct, so `txHash` is camelCase even though
+ * the status-variant fields that hold it (`received_tokens`, `refunded_tokens`) are snake_case.
+ */
+export interface GatewayTokenTransferV3 {
+  token: string
+  amount: string
+  chain: string
+  txHash: string
+  usd?: string | null
+}
+
+// Discriminated by the present key. Variant keys camelCase, fields inside snake_case (see AGENTS.md).
 export interface GatewayOrderStatusV3 {
   inProgress?: {
     refund_tx?: object | null
+    /** No longer populated by the gateway; kept for older orders. */
     pending_btc_payment?: { txid: string; amount: string } | null
   }
   failed?: { refund_tx?: object | null }
-  success?: { received_tokens: object[] }
-  refunded?: { refunded_tokens: object[] }
+  success?: { received_tokens: GatewayTokenTransferV3[] }
+  refunded?: { refunded_tokens: GatewayTokenTransferV3[] }
 }
 
+/** `ChainTxInfoV3`: the order's source leg. `txHash` is null until the source tx is indexed. */
+export interface GatewayChainTxInfoV3 {
+  chain: string
+  token: string
+  amount: string
+  txHash?: string | null
+  usd?: string | null
+}
+
+/** get-order response. Top-level struct fields are camelCase. */
 export interface GatewayOrderInfoV3 {
   id: string
   timestamp: number
+  srcInfo?: GatewayChainTxInfoV3
+  dstInfo?: { chain: string; token: string; amount: string; usd?: string | null }
   status: GatewayOrderStatusV3
-  estimated_time_in_secs?: number
-  deposit_address?: string | null
+  estimatedTimeInSecs?: number | null
+  depositAddress?: string | null
 }

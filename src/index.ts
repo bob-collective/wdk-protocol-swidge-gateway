@@ -3,6 +3,7 @@ export { GatewayClient } from './gateway-client.js'
 export { GatewaySwidgeError, ERR } from './errors.js'
 export { buildTronApproval } from './chain-adapters/tron.js'
 export type { TronApprovalCall } from './chain-adapters/tron.js'
+export type { GatewaySwidgeQuote } from './map/quote.js'
 export type {
   SwidgeSimulation,
   BtcSimulateResult,

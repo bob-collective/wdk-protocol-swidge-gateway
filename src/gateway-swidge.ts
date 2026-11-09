@@ -1,7 +1,13 @@
-import { SwidgeProtocol } from '@tetherto/wdk-wallet/protocols'
+import {
+  AccountRequiredError,
+  SwidgeError,
+  SwidgeErrorReason,
+  SwidgeProtocol,
+  ValueError,
+} from '@tetherto/wdk-wallet/protocols'
 import type {
   SwidgeOptions,
-  SwidgeQuote,
+  SwidgeProtocolConfig,
   SwidgeResult,
   SwidgeStatusResult,
   SwidgeSupportedChain,
@@ -20,7 +26,9 @@ import type { EvmRequiredApproval } from './chain-adapters/evm.js'
 import { chainFamily, detectVariant } from './chains.js'
 import { toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
-import { toSwidgeQuote } from './map/quote.js'
+import { quoteSlippageBps, toSwidgeQuote } from './map/quote.js'
+import type { GatewayQuoteV4, GatewaySwidgeQuote } from './map/quote.js'
+import { assertFeeCaps } from './fee-caps.js'
 import { toSwidgeStatus } from './map/status.js'
 import { toSupportedChains, toSupportedTokens } from './map/routes.js'
 import { orderPayload } from './map/order.js'
@@ -42,7 +50,24 @@ function assertPayloadFamily(payload: OrderPayload, srcFamily: string): void {
   }
 }
 
-export interface GatewaySwidgeConfig {
+/** Checks run on the quote before create-order, so a refused swidge leaves no orphaned order. */
+interface OrderChecks {
+  minAmountOut?: bigint
+  caps?: SwidgeProtocolConfig
+}
+
+/** Parse an integer base-unit amount option, or throw `ValueError` naming it. */
+function baseUnits(name: string, value: number | bigint | string): bigint {
+  try {
+    const n = BigInt(value)
+    if (n >= 0n) return n
+  } catch {
+    // fall through
+  }
+  throw new ValueError(`${name} must be a non-negative integer amount in base units, got ${value}`)
+}
+
+export interface GatewaySwidgeConfig extends SwidgeProtocolConfig {
   apiUrl?: string
   bearerToken?: string
   http?: GatewayClientConfig['http']
@@ -84,8 +109,6 @@ export class GatewaySwidge extends SwidgeProtocol {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   constructor(account: any, config: GatewaySwidgeConfig = {}) {
-    // @ts-expect-error: GatewaySwidgeConfig has extra fields not in SwidgeProtocolConfig;
-    // the base class only reads maxNetworkFeeBps / maxProtocolFeeBps which are absent here.
     super(account, config)
     this._client =
       config.client ||
@@ -117,9 +140,11 @@ export class GatewaySwidge extends SwidgeProtocol {
     srcFamily: string
     dstFamily: string
   } {
-    const fromChain = (options.fromChain as string | undefined) || this._fromChain
+    const fromChain = options.fromChain || this._fromChain
     if (!fromChain) throw new Error('source chain unknown: pass config.fromChain')
-    const toChain = (options.toChain as string | undefined) || fromChain
+    // WDK types `toChain` as `string | number`; gateway chain ids are strings.
+    const toChain =
+      options.toChain != null && options.toChain !== '' ? String(options.toChain) : fromChain
     return {
       fromChain,
       toChain,
@@ -138,6 +163,12 @@ export class GatewaySwidge extends SwidgeProtocol {
     affiliateApplied: boolean
     fromChain: string
   }> {
+    if (options.toTokenAmount != null) {
+      throw new ValueError(
+        'exact-out swidges (toTokenAmount) are not supported by the BOB Gateway: pass fromTokenAmount'
+      )
+    }
+    if (options.fromTokenAmount == null) throw new ValueError('fromTokenAmount is required')
     const { fromChain, toChain, srcFamily, dstFamily } = this._resolveChains(options)
     const variant = detectVariant({ srcFamily, dstFamily })
     const fromAddress =
@@ -145,12 +176,25 @@ export class GatewaySwidge extends SwidgeProtocol {
         ? await this._account.getAddress()
         : undefined
     const refundAddress = this._refundAddress ?? fromAddress
+    // A same-chain swap pays out to the sender by default. Cross-chain routes need an explicit
+    // recipient: the sender's address may be invalid on the destination (another chain family) or
+    // not controlled there (an ERC-4337 account is only deployed where it was deployed).
+    const sameChain = toChain.toLowerCase() === fromChain.toLowerCase()
+    const recipient = options.recipient ?? (sameChain ? fromAddress : undefined)
+    if (!recipient) {
+      throw new ValueError(
+        sameChain
+          ? 'recipient is required: pass options.recipient, or use an account with getAddress()'
+          : `recipient is required for cross-chain routes (${fromChain} → ${toChain})`
+      )
+    }
     const params = toQuoteParams(
       {
         ...options,
         fromChain,
         toChain,
-        fromTokenAmount: options.fromTokenAmount ?? 0,
+        recipient,
+        fromTokenAmount: options.fromTokenAmount,
       },
       {
         fromAddress,
@@ -170,29 +214,41 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @param options - Source asset, destination asset, amount, chains, and recipient.
    * @returns Quote containing expected output, price impact, and fees.
    */
-  async quoteSwidge(options: SwidgeOptions): Promise<SwidgeQuote> {
+  async quoteSwidge(options: SwidgeOptions): Promise<GatewaySwidgeQuote> {
     const { params, affiliateApplied } = await this._buildQuoteParams(options)
-    const gw = await this._client.getQuote(params)
-    // priceImpact: wire is string, WDK type is number — cast at boundary.
-    // fees: WDK SwidgeFee requires `token`; our local fees omit it — cast at boundary.
-    return toSwidgeQuote(gw as Record<string, unknown>, {
-      affiliateApplied,
-    }) as unknown as SwidgeQuote
+    const gw = (await this._client.getQuote(params)) as GatewayQuoteV4
+    return toSwidgeQuote(gw, { affiliateApplied })
+  }
+
+  /** Fail fast — before any gateway call — when the account cannot sign on the source chain. */
+  private _assertCanSign(srcFamily: string): void {
+    const method = srcFamily === 'bitcoin' ? 'signTransaction' : 'sendTransaction'
+    if (!this._account || typeof this._account[method] !== 'function') {
+      throw new AccountRequiredError(
+        `swidge() needs a full account that implements ${method}(); a read-only account can ` +
+          'only quote'
+      )
+    }
   }
 
   /**
    * Quote and execute a swap, bridge, or combined route.
    *
    * @param options - Source asset, destination asset, amount, chains, and recipient.
-   * @param config - Per-execution settings, including an optional paymaster token.
+   * @param config - Per-execution fee caps (override the instance's) and an optional paymaster
+   *   token.
    * @returns Executed order ID, source transaction hash, amounts, and fees.
    */
   async swidge(
     options: SwidgeOptions,
-    config: Record<string, unknown> = {}
+    config: SwidgeProtocolConfig & { paymasterToken?: string } = {}
   ): Promise<SwidgeResult> {
-    const { params, variant, srcFamily } = await this._buildQuoteParams(options)
-    const { quote, payload } = await this._createOrder(params, variant, srcFamily)
+    this._assertCanSign(this._resolveChains(options).srcFamily)
+    const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
+    const { quote, payload } = await this._createOrder(params, variant, srcFamily, {
+      minAmountOut: this._minAmountOut(options),
+      caps: this._caps(config),
+    })
     const adapter = getAdapter(srcFamily)
 
     let txid: string
@@ -227,19 +283,38 @@ export class GatewaySwidge extends SwidgeProtocol {
     return {
       id: payload.orderId,
       hash: txid,
-      // @ts-expect-error: LocalFee omits the `token` field required by SwidgeFee.
       fees: sq.fees,
+      transactions: [{ hash: txid, chain: fromChain, type: 'source' }],
       fromTokenAmount: sq.fromTokenAmount,
       toTokenAmount: sq.toTokenAmount,
+      toTokenAmountMin: sq.toTokenAmountMin,
     }
   }
 
-  /** Quote → create-order → payload, with the payload's family checked against the route's. */
+  /** Per-call caps override the instance's, cap by cap. */
+  private _caps(config: SwidgeProtocolConfig): SwidgeProtocolConfig {
+    return {
+      maxNetworkFeeBps: config.maxNetworkFeeBps ?? this._config.maxNetworkFeeBps,
+      maxProtocolFeeBps: config.maxProtocolFeeBps ?? this._config.maxProtocolFeeBps,
+    }
+  }
+
+  private _minAmountOut(options: SwidgeOptions): bigint | undefined {
+    return options.minAmountOut == null
+      ? undefined
+      : baseUnits('minAmountOut', options.minAmountOut)
+  }
+
+  /**
+   * Quote → checks → create-order → payload, with the payload's family checked against the
+   * route's. The checks run before create-order, so a refused swidge leaves no orphaned order.
+   */
   private async _createOrder(
     params: Record<string, string | undefined>,
     variant: 'onramp' | 'offramp' | 'tokenSwap',
-    srcFamily: string
-  ): Promise<{ quote: Record<string, unknown>; payload: OrderPayload }> {
+    srcFamily: string,
+    checks: OrderChecks = {}
+  ): Promise<{ quote: GatewayQuoteV4; payload: OrderPayload }> {
     if (!params.refundAddress) {
       throw new GatewaySwidgeError(
         ERR.VALIDATION,
@@ -247,7 +322,7 @@ export class GatewaySwidge extends SwidgeProtocol {
           'account with getAddress()'
       )
     }
-    const quote = (await this._client.getQuote(params)) as Record<string, unknown>
+    const quote = (await this._client.getQuote(params)) as GatewayQuoteV4
     const srcChain = (quote[variant] as { srcChain?: unknown } | undefined)?.srcChain
     if (
       srcChain !== undefined &&
@@ -258,6 +333,25 @@ export class GatewaySwidge extends SwidgeProtocol {
         `quote is for source chain ${srcChain}, but the route was requested from ${params.srcChain}`
       )
     }
+    if (checks.minAmountOut !== undefined) {
+      // Without the echoed slippage, toTokenAmountMin would be the bare estimate — not a floor.
+      if (quoteSlippageBps(quote) === null) {
+        throw new GatewaySwidgeError(
+          ERR.VALIDATION,
+          'cannot verify minAmountOut: the quote carries no slippage to derive its minimum from',
+          { cause: quote }
+        )
+      }
+      const { toTokenAmountMin } = toSwidgeQuote(quote, { affiliateApplied: false })
+      if (toTokenAmountMin < checks.minAmountOut) {
+        throw new SwidgeError(
+          `quote guarantees at least ${toTokenAmountMin} of the destination token after slippage, ` +
+            `below minAmountOut ${checks.minAmountOut}`,
+          { reason: SwidgeErrorReason.COULD_NOT_MET_THRESHOLD }
+        )
+      }
+    }
+    if (checks.caps) assertFeeCaps(quote, checks.caps)
     const order = (await this._client.createOrder({ [variant]: quote[variant] })) as Record<
       string,
       unknown
@@ -267,7 +361,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     return { quote, payload }
   }
 
-  private _aaConfig(config: Record<string, unknown>): unknown {
+  private _aaConfig(config: { paymasterToken?: string }): unknown {
     const pm = (config && config.paymasterToken) || this._paymasterToken
     return pm ? { paymasterToken: pm } : undefined
   }
@@ -311,11 +405,18 @@ export class GatewaySwidge extends SwidgeProtocol {
    * estimates. `broadcast` is always `false`.
    *
    * @param options - Source asset, destination asset, amount, chains, and recipient.
+   * @param config - Per-call fee caps, as for `swidge()`.
    * @returns Dry-run result with route-specific validity and fee estimates.
    */
-  async simulateSwidge(options: SwidgeOptions & { fromChain?: string }): Promise<SwidgeSimulation> {
+  async simulateSwidge(
+    options: SwidgeOptions & { fromChain?: string },
+    config: SwidgeProtocolConfig = {}
+  ): Promise<SwidgeSimulation> {
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
-    const { quote, payload } = await this._createOrder(params, variant, srcFamily)
+    const { quote, payload } = await this._createOrder(params, variant, srcFamily, {
+      minAmountOut: this._minAmountOut(options),
+      caps: this._caps(config),
+    })
     const adapter = getAdapter(srcFamily)
     const sq = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
     const common = {

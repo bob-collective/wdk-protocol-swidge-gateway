@@ -1,115 +1,60 @@
 import { describe, test, expect } from 'vitest'
 import { toSupportedChains, toSupportedTokens } from '../src/map/routes.js'
 
+const ZERO = '0x0000000000000000000000000000000000000000'
+const USDT_BASE = '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2'
+const USDT_TRON = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+const UNKNOWN_SOLANA = 'So11111111111111111111111111111111111111112'
+
 const ROUTES = [
-  {
-    srcChain: 'bitcoin',
-    dstChain: 'base',
-    srcToken: '0x0000000000000000000000000000000000000000',
-    dstToken: '0xusdt000000000000000000000000000000000001',
-  },
-  {
-    srcChain: 'base',
-    dstChain: 'bitcoin',
-    srcToken: '0xusdt000000000000000000000000000000000001',
-    dstToken: '0x0000000000000000000000000000000000000000',
-  },
-  {
-    srcChain: 'base',
-    dstChain: 'solana',
-    srcToken: '0xusdt000000000000000000000000000000000001',
-    dstToken: 'So11111111111111111111111111111111111111112',
-  },
-  {
-    srcChain: 'tron',
-    dstChain: 'bitcoin',
-    srcToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
-    dstToken: '0x0000000000000000000000000000000000000000',
-  },
+  { srcChain: 'bitcoin', dstChain: 'base', srcToken: ZERO, dstToken: USDT_BASE },
+  { srcChain: 'base', dstChain: 'bitcoin', srcToken: USDT_BASE, dstToken: ZERO },
+  { srcChain: 'base', dstChain: 'solana', srcToken: USDT_BASE, dstToken: UNKNOWN_SOLANA },
+  { srcChain: 'tron', dstChain: 'bitcoin', srcToken: USDT_TRON, dstToken: ZERO },
+  { srcChain: 'bsc', dstChain: 'mystery', srcToken: ZERO, dstToken: ZERO },
 ]
 
 describe('toSupportedChains', () => {
-  test('chains include bitcoin as utxo', () => {
-    const chains = toSupportedChains(ROUTES)
-    expect(chains).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'bitcoin', type: 'utxo' })]))
-  })
-
-  test('chains include base as evm', () => {
-    const chains = toSupportedChains(ROUTES)
-    expect(chains).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'base', type: 'evm' })]))
-  })
-
-  test('chains include solana as svm', () => {
-    const chains = toSupportedChains(ROUTES)
-    expect(chains).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'solana', type: 'svm' })]))
-  })
-
-  test('chains are deduplicated', () => {
-    const chains = toSupportedChains(ROUTES)
-    const ids = chains.map((c) => c.id)
-    expect(ids.filter((id) => id === 'base').length).toBe(1)
-  })
-
-  test('bitcoin chain has nativeToken BTC', () => {
-    const chains = toSupportedChains(ROUTES)
-    const btc = chains.find((c) => c.id === 'bitcoin')!
-    expect(btc.nativeToken).toBe('BTC')
-  })
-
-  test('evm chain has nativeToken ETH', () => {
-    const chains = toSupportedChains(ROUTES)
-    const base = chains.find((c) => c.id === 'base')!
-    expect(base.nativeToken).toBe('ETH')
-  })
-
-  test('tron chain has nativeToken TRX', () => {
-    const chains = toSupportedChains(ROUTES)
-    const tron = chains.find((c) => c.id === 'tron')!
-    expect(tron.nativeToken).toBe('TRX')
-  })
-
-  test('solana chain has nativeToken SOL', () => {
-    const chains = toSupportedChains(ROUTES)
-    const solana = chains.find((c) => c.id === 'solana')!
-    expect(solana.nativeToken).toBe('SOL')
+  test('names, VM types and native tokens come from the chain table', () => {
+    expect(toSupportedChains(ROUTES)).toEqual([
+      { id: 'bitcoin', name: 'Bitcoin', type: 'utxo', nativeToken: 'BTC' },
+      { id: 'base', name: 'Base', type: 'evm', nativeToken: 'ETH' },
+      { id: 'solana', name: 'Solana', type: 'svm', nativeToken: 'SOL' },
+      { id: 'tron', name: 'Tron', type: 'tvm', nativeToken: 'TRX' },
+      { id: 'bsc', name: 'BNB Smart Chain', type: 'evm', nativeToken: 'BNB' },
+      // Unknown chain: raw id as name, family VM type, native token not guessed.
+      { id: 'mystery', name: 'mystery', type: 'evm', nativeToken: '' },
+    ])
   })
 })
 
 describe('toSupportedTokens', () => {
-  test('tokens include dst token with chain', () => {
-    const tokens = toSupportedTokens(ROUTES, {})
-    expect(tokens).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          token: '0xusdt000000000000000000000000000000000001',
-          chain: 'base',
-          address: '0xusdt000000000000000000000000000000000001',
-        }),
-      ])
-    )
+  test('carries symbol, decimals and name; drops tokens missing from the table', () => {
+    expect(toSupportedTokens(ROUTES)).toEqual([
+      { token: ZERO, chain: 'bitcoin', address: ZERO, symbol: 'BTC', decimals: 8, name: 'Bitcoin' },
+      {
+        token: USDT_BASE,
+        chain: 'base',
+        address: USDT_BASE,
+        symbol: 'USDT',
+        decimals: 6,
+        name: 'Tether USD',
+      },
+      {
+        token: USDT_TRON,
+        chain: 'tron',
+        address: USDT_TRON,
+        symbol: 'USDT',
+        decimals: 6,
+        name: 'Tether USD',
+      },
+      { token: ZERO, chain: 'bsc', address: ZERO, symbol: 'BNB', decimals: 18, name: 'BNB' },
+    ])
   })
 
-  test('tokens are deduplicated by chain:address', () => {
-    const tokens = toSupportedTokens(ROUTES, {})
-    const usdt = tokens.filter(
-      (t) =>
-        (t as unknown as { token: string }).token === '0xusdt000000000000000000000000000000000001' &&
-        (t as unknown as { chain: string }).chain === 'base'
-    )
-    expect(usdt.length).toBe(1)
-  })
-
-  test('tokens fromChain filter returns only matching chain', () => {
-    const tokens = toSupportedTokens(ROUTES, { fromChain: 'base' })
-    expect(tokens.every((t) => (t as unknown as { chain: string }).chain === 'base')).toBe(true)
-    expect(tokens.length).toBeGreaterThan(0)
-  })
-
-  test('tokens have no symbol or decimals properties', () => {
-    const tokens = toSupportedTokens(ROUTES, {})
-    for (const t of tokens) {
-      expect(t).not.toHaveProperty('symbol')
-      expect(t).not.toHaveProperty('decimals')
-    }
+  test('fromChain filter returns only that chain', () => {
+    expect(toSupportedTokens(ROUTES, { fromChain: 'base' }).map((t) => t.token)).toEqual([
+      USDT_BASE,
+    ])
   })
 })

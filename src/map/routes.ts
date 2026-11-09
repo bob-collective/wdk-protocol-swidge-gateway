@@ -1,29 +1,6 @@
-import { chainFamily } from '../chains.js'
+import { chainInfo } from '../chains.js'
+import { TOKENS } from '../tokens.js'
 import type { SwidgeSupportedChain, SwidgeSupportedToken } from '@tetherto/wdk-wallet/protocols'
-
-const FAMILY_TO_TYPE: Record<string, 'utxo' | 'svm' | 'evm'> = {
-  bitcoin: 'utxo',
-  solana: 'svm',
-  tron: 'evm',
-  evm: 'evm',
-}
-
-const FAMILY_TO_NATIVE_TOKEN: Record<string, string> = {
-  bitcoin: 'BTC',
-  solana: 'SOL',
-  tron: 'TRX',
-  evm: 'ETH',
-}
-
-function chainEntry(id: string): SwidgeSupportedChain {
-  const family = chainFamily(id)
-  return {
-    id,
-    name: id,
-    type: FAMILY_TO_TYPE[family] || 'evm',
-    nativeToken: FAMILY_TO_NATIVE_TOKEN[family] || 'ETH',
-  }
-}
 
 export interface RouteInfo {
   srcChain: string
@@ -32,8 +9,18 @@ export interface RouteInfo {
   dstToken: string
 }
 
+/** Key into `TOKENS`: `<chain>:<token>`, both lower-cased. */
+export function tokenKey(chain: string, token: string): string {
+  return `${chain.toLowerCase()}:${token.toLowerCase()}`
+}
+
+function chainEntry(id: string): SwidgeSupportedChain {
+  const { name, type, nativeToken } = chainInfo(id)
+  return { id, name, type, nativeToken }
+}
+
 /**
- * Extract unique chains from a routes list.
+ * Extract unique chains from a routes list, with names and native tokens from `CHAINS`.
  */
 export function toSupportedChains(routes: RouteInfo[]): SwidgeSupportedChain[] {
   const map = new Map<string, SwidgeSupportedChain>()
@@ -46,35 +33,31 @@ export function toSupportedChains(routes: RouteInfo[]): SwidgeSupportedChain[] {
 }
 
 /**
- * Extract unique (chain, tokenAddress) pairs from a routes list.
+ * Extract unique (chain, token) pairs from a routes list, with symbol/decimals/name from `TOKENS`.
  *
- * NOTE: The get-routes response only provides token addresses — no symbol or decimals.
- * Callers that need token metadata must fetch it separately (e.g. from the token list or
- * an on-chain call). symbol/decimals are intentionally omitted from the returned objects.
- *
- * The return type is cast to `SwidgeSupportedToken[]` even though `symbol` and `decimals`
- * are absent from the objects — the gateway API does not provide them. Callers should treat
- * these fields as absent and not rely on them.
+ * get-routes returns addresses only, so metadata comes from the generated `src/tokens.ts`. A token
+ * missing from that table is left out — `symbol` and `decimals` are required, and a guess would
+ * mis-scale amounts. The validate lane fails when the live route matrix has such a token.
  */
 export function toSupportedTokens(
   routes: RouteInfo[],
-  opts?: { fromChain?: string }
+  opts: { fromChain?: string } = {}
 ): SwidgeSupportedToken[] {
-  const options = opts || {}
-  const out: { token: string; chain: string; address: string }[] = []
+  const out: SwidgeSupportedToken[] = []
   const seen = new Set<string>()
   for (const r of routes) {
-    for (const [chain, tokenAddress] of [
+    for (const [chain, token] of [
       [r.srcChain, r.srcToken],
       [r.dstChain, r.dstToken],
     ]) {
-      if (options.fromChain && options.fromChain !== chain) continue
-      const key = `${chain}:${tokenAddress}`
+      if (opts.fromChain && opts.fromChain !== chain) continue
+      const key = tokenKey(chain, token)
       if (seen.has(key)) continue
       seen.add(key)
-      out.push({ token: tokenAddress, chain, address: tokenAddress })
+      const info = TOKENS[key]
+      if (!info) continue
+      out.push({ token, chain, address: token, ...info })
     }
   }
-  // Cast: symbol and decimals are absent (not provided by the API); see function doc.
-  return out as unknown as SwidgeSupportedToken[]
+  return out
 }

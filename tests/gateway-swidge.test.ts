@@ -139,7 +139,11 @@ describe('GatewaySwidge', () => {
 
   test('swidge refuses to create an order without a refund address', async () => {
     const client = fakeClient()
-    const sw = new GatewaySwidge({}, { fromChain: 'bitcoin', client })
+    // Can sign, but has no getAddress() to fall back to for the refund address.
+    const sw = new GatewaySwidge(
+      { signTransaction: async () => '' },
+      { fromChain: 'bitcoin', client }
+    )
     await expect(
       sw.swidge({
         fromToken: 'BTC',
@@ -232,7 +236,7 @@ describe('GatewaySwidge', () => {
       })) as unknown as GatewayClient['getQuote'],
     })
     const sw = new GatewaySwidge(
-      { getAddress: async () => '0xsender' },
+      { getAddress: async () => '0xsender', sendTransaction: vi.fn() },
       { fromChain: 'base', client }
     )
     await expect(
