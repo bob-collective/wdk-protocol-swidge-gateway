@@ -201,11 +201,8 @@ export class GatewaySwidge extends SwidgeProtocol {
     options: SwidgeOptions,
     config: Record<string, unknown> = {}
   ): Promise<SwidgeResult> {
+    const maxNativeFee = this._resolveMaxNativeFee(config)
     const { params, variant, srcFamily } = await this._buildQuoteParams(options)
-    const maxNativeFee =
-      config.maxNativeFee == null
-        ? this._maxNativeFee
-        : parseBaseUnits('maxNativeFee', config.maxNativeFee)
     const { quote, payload } = await this._createOrder(params, variant, srcFamily, maxNativeFee)
     const adapter = getAdapter(srcFamily)
 
@@ -256,7 +253,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     params: Record<string, string | undefined>,
     variant: 'onramp' | 'offramp' | 'tokenSwap',
     srcFamily: string,
-    maxNativeFee: bigint | undefined = this._maxNativeFee
+    maxNativeFee: bigint | undefined
   ): Promise<{ quote: Record<string, unknown>; payload: OrderPayload }> {
     if (!params.refundAddress) {
       throw new GatewaySwidgeError(
@@ -291,6 +288,17 @@ export class GatewaySwidge extends SwidgeProtocol {
       maxNativeFee,
     })
     return { quote, payload }
+  }
+
+  /**
+   * The native-fee cap for one call: `config.maxNativeFee` if given, else the instance's, else
+   * undefined (→ the chain default). `swidge()`, `simulateSwidge()` and `getRequiredApproval()`
+   * all resolve it here, so an order one of them accepts the others accept too.
+   */
+  private _resolveMaxNativeFee(config: Record<string, unknown>): bigint | undefined {
+    return config.maxNativeFee == null
+      ? this._maxNativeFee
+      : parseBaseUnits('maxNativeFee', config.maxNativeFee)
   }
 
   private _aaConfig(config: Record<string, unknown>): unknown {
@@ -337,11 +345,16 @@ export class GatewaySwidge extends SwidgeProtocol {
    * estimates. `broadcast` is always `false`.
    *
    * @param options - Source asset, destination asset, amount, chains, and recipient.
+   * @param config - Per-call settings, as for `swidge()`; only `maxNativeFee` is read.
    * @returns Dry-run result with route-specific validity and fee estimates.
    */
-  async simulateSwidge(options: SwidgeOptions & { fromChain?: string }): Promise<SwidgeSimulation> {
+  async simulateSwidge(
+    options: SwidgeOptions & { fromChain?: string },
+    config: Record<string, unknown> = {}
+  ): Promise<SwidgeSimulation> {
+    const maxNativeFee = this._resolveMaxNativeFee(config)
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
-    const { quote, payload } = await this._createOrder(params, variant, srcFamily)
+    const { quote, payload } = await this._createOrder(params, variant, srcFamily, maxNativeFee)
     const adapter = getAdapter(srcFamily)
     const sq = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
     const common = {
@@ -439,6 +452,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    * `approve({ token, spender, amount: 0n })`, then approve `amount`.
    *
    * @param options - Route and source-token amount requiring an allowance check.
+   * @param config - Per-call settings, as for `swidge()`; only `maxNativeFee` is read.
    * @returns Required token approval, or `null` when current allowance is sufficient or unnecessary.
    */
   async getRequiredApproval(
@@ -446,8 +460,10 @@ export class GatewaySwidge extends SwidgeProtocol {
       fromToken: string
       toToken: string
       fromTokenAmount: bigint | string | number
-    }
+    },
+    config: Record<string, unknown> = {}
   ): Promise<EvmRequiredApproval | null> {
+    const maxNativeFee = this._resolveMaxNativeFee(config)
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     if (variant === 'onramp') return null
     const key = `${fromChain}:${variant}:${options.fromToken}:${options.toToken}:${(options.toChain as string) || ''}`
@@ -455,7 +471,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     if (this._spenderCache.has(key)) {
       spender = this._spenderCache.get(key)!
     } else {
-      const { payload } = await this._createOrder(params, variant, srcFamily)
+      const { payload } = await this._createOrder(params, variant, srcFamily, maxNativeFee)
       if (payload.kind === 'btc')
         throw new Error('expected a contract-call payload for approval check')
       spender = payload.tx.to

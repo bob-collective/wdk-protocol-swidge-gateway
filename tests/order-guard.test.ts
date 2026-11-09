@@ -201,6 +201,37 @@ describe('native value', () => {
     })
   })
 
+  test('simulateSwidge and getRequiredApproval take the per-call maxNativeFee too', async () => {
+    const { sw, account } = setup(order({ value: '1001' }), { maxNativeFee: 1000 })
+    Object.assign(account, {
+      getAllowance: vi.fn(async () => 0n),
+      quoteSendTransaction: vi.fn(async () => ({ fee: 1n })),
+    })
+    await expect(sw.simulateSwidge(route())).rejects.toThrow(/above maxNativeFee 1000/)
+    await expect(sw.getRequiredApproval(route())).rejects.toThrow(/above maxNativeFee 1000/)
+
+    const perCall = { maxNativeFee: 1001n }
+    await expect(sw.simulateSwidge(route(), perCall)).resolves.toMatchObject({
+      evm: { valid: true, requiredApproval: { spender: CANONICAL_HOLDER } },
+    })
+    await expect(sw.getRequiredApproval(route(), perCall)).resolves.toMatchObject({
+      spender: CANONICAL_HOLDER,
+    })
+    expect(account.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  test('an invalid per-call maxNativeFee is refused before any gateway call', async () => {
+    const { sw, client } = setup(order())
+    for (const call of [
+      () => sw.swidge(route(), { maxNativeFee: -1 }),
+      () => sw.simulateSwidge(route(), { maxNativeFee: '0x10' }),
+      () => sw.getRequiredApproval(route(), { maxNativeFee: 1.5 }),
+    ]) {
+      await expect(call()).rejects.toThrow(/maxNativeFee must be a non-negative integer/)
+    }
+    expect(client.getQuote).not.toHaveBeenCalled()
+  })
+
   test('maxNativeFee: 0 forbids any native value on an ERC-20 order', async () => {
     await refused(order({ value: '1' }), /above maxNativeFee 0/, { maxNativeFee: 0n })
   })
