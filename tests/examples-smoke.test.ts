@@ -4,8 +4,9 @@ import { run as onrampBase } from '../examples/onramp-btc-to-usdt-base.js'
 import { run as quoteAndStatus } from '../examples/quote-and-status.js'
 import { run as offrampTron } from '../examples/offramp-usdt-tron-to-btc.js'
 import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
+import { TRON_EXEC, TRON_EXEC_HEX } from './fixtures/exec.js'
 
-const TRON_TXID = buildTronTx({ data: 'feed', feeLimit: 100_000_000 }).txID
+const TRON_TXID = buildTronTx({ data: TRON_EXEC_HEX, feeLimit: 100_000_000 }).txID
 
 function makeMockHttp() {
   return {
@@ -75,8 +76,9 @@ function makeTronHttp() {
               tx: {
                 type: 'tron',
                 to: REGISTRY,
-                data: '0xfeed',
+                data: TRON_EXEC,
                 value: '0',
+                chain: 'tron',
                 feeLimit: '100000000',
               },
             },

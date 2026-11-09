@@ -4,8 +4,9 @@ import { Transaction } from 'bitcoinjs-lib'
 import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
 import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
+import { CANONICAL_HOLDER, EVM_TOKEN, TRON_EXEC, TRON_EXEC_HEX, execData } from './fixtures/exec.js'
 
-const TRON_TXID = buildTronTx({ data: 'feed', feeLimit: 100_000_000 }).txID
+const TRON_TXID = buildTronTx({ data: TRON_EXEC_HEX, feeLimit: 100_000_000 }).txID
 
 function buildMinimalTxHex(): { hex: string; txid: string } {
   const tx = new Transaction()
@@ -201,7 +202,15 @@ describe('GatewaySwidge', () => {
         },
       })) as unknown as GatewayClient['getQuote'],
       createOrder: vi.fn(async () => ({
-        offramp: { order_id: 'o2', tx: { to: '0xto', data: '0xdata', value: '0' } },
+        offramp: {
+          order_id: 'o2',
+          tx: {
+            to: CANONICAL_HOLDER,
+            data: execData({ token: EVM_TOKEN, amount: 1000n }),
+            value: '0',
+            chain: 'base',
+          },
+        },
       })) as unknown as GatewayClient['createOrder'],
     })
     const account = {
@@ -210,7 +219,7 @@ describe('GatewaySwidge', () => {
     }
     const sw = new GatewaySwidge(account, { fromChain: 'base', client: evmClient })
     const res = await sw.swidge({
-      fromToken: '0xtok',
+      fromToken: EVM_TOKEN,
       toToken: 'BTC',
       toChain: 'bitcoin',
       recipient: 'bc1qrcpt',
@@ -237,7 +246,7 @@ describe('GatewaySwidge', () => {
     )
     await expect(
       sw.swidge({
-        fromToken: '0xtok',
+        fromToken: EVM_TOKEN,
         toToken: 'BTC',
         toChain: 'bitcoin',
         recipient: 'bc1qrcpt',
@@ -262,7 +271,7 @@ describe('GatewaySwidge', () => {
           tx: {
             type: 'tron',
             to: REGISTRY,
-            data: '0xfeed',
+            data: TRON_EXEC,
             value: '0',
             chain: 'tron',
             feeLimit: '100000000',
@@ -306,7 +315,7 @@ describe('GatewaySwidge', () => {
     expect(triggerSmartContract).toHaveBeenCalledWith(
       REGISTRY,
       '',
-      { input: 'feed', callValue: 0, feeLimit: 100_000_000 },
+      { input: TRON_EXEC_HEX, callValue: 0, feeLimit: 100_000_000 },
       [],
       OWNER
     )
@@ -327,7 +336,14 @@ describe('GatewaySwidge', () => {
       createOrder: vi.fn(async () => ({
         offramp: {
           order_id: 'o-tron',
-          tx: { type: 'tron', to: REGISTRY, data: '0xfeed', value: '0', feeLimit: '100000000' },
+          tx: {
+            type: 'tron',
+            to: REGISTRY,
+            data: TRON_EXEC,
+            value: '0',
+            chain: 'tron',
+            feeLimit: '100000000',
+          },
         },
       })) as unknown as GatewayClient['createOrder'],
     })
@@ -391,12 +407,16 @@ describe('GatewaySwidge', () => {
   ])('swidge rejects %s', async (_label, fromChain, txType, expected) => {
     const client = fakeClient({
       getQuote: vi.fn(async () => ({
-        offramp: { inputAmount: { amount: '1000000' }, outputAmount: { amount: '900' } },
+        offramp: {
+          inputAmount: { amount: '1000000' },
+          outputAmount: { amount: '900' },
+          srcChain: fromChain,
+        },
       })) as unknown as GatewayClient['getQuote'],
       createOrder: vi.fn(async () => ({
         offramp: {
           order_id: 'o-mixed',
-          tx: { ...(txType ? { type: txType } : {}), to: REGISTRY, data: '0xfeed', value: '0' },
+          tx: { ...(txType ? { type: txType } : {}), to: REGISTRY, data: TRON_EXEC, value: '0' },
         },
       })) as unknown as GatewayClient['createOrder'],
     })
@@ -516,7 +536,7 @@ describe('GatewaySwidge', () => {
       createOrder: vi.fn(async () => ({
         offramp: {
           order_id: 'o-tron2',
-          tx: { type: 'tron', to: REGISTRY, data: '0xfeed', value: '0' },
+          tx: { type: 'tron', to: REGISTRY, data: TRON_EXEC, value: '0', chain: 'tron' },
         },
       })) as unknown as GatewayClient['createOrder'],
     })
@@ -544,12 +564,21 @@ describe('GatewaySwidge', () => {
   test('getRequiredApproval: caches spender per route — createOrder called at most once', async () => {
     const offrampClient = fakeClient({
       getQuote: vi.fn(async () => ({
-        offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, fees: {} },
+        offramp: {
+          inputAmount: { amount: '1000' },
+          outputAmount: { amount: '900' },
+          srcChain: 'base',
+        },
       })) as unknown as GatewayClient['getQuote'],
       createOrder: vi.fn(async () => ({
         offramp: {
           order_id: 'o3',
-          tx: { to: '0x0000000000001fF3684f28c67538d4D072C22734', data: '0xdata', value: '0' },
+          tx: {
+            to: CANONICAL_HOLDER,
+            data: execData({ token: EVM_TOKEN, amount: 500n }),
+            value: '0',
+            chain: 'base',
+          },
         },
       })) as unknown as GatewayClient['createOrder'],
     })
@@ -559,7 +588,7 @@ describe('GatewaySwidge', () => {
     }
     const sw = new GatewaySwidge(account, { fromChain: 'base', client: offrampClient })
     const options = {
-      fromToken: '0xtok',
+      fromToken: EVM_TOKEN,
       toToken: 'BTC',
       toChain: 'bitcoin',
       recipient: 'bc1qrcpt',
@@ -571,12 +600,12 @@ describe('GatewaySwidge', () => {
 
     expect(offrampClient.createOrder).toHaveBeenCalledTimes(1)
     expect(first).toEqual({
-      token: '0xtok',
+      token: EVM_TOKEN,
       spender: '0x0000000000001fF3684f28c67538d4D072C22734',
       amount: MAX_UINT256,
     })
     expect(second).toEqual({
-      token: '0xtok',
+      token: EVM_TOKEN,
       spender: '0x0000000000001fF3684f28c67538d4D072C22734',
       amount: MAX_UINT256,
     })

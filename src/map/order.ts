@@ -11,12 +11,16 @@ export interface BtcOrderPayload {
 export interface EvmOrderPayload {
   orderId: string
   kind: 'evm'
+  /** Chain the gateway built the tx for (`tx.chain` on the wire). */
+  chain?: string
   tx: { to: string; data: string; value: string }
 }
 
 export interface TronOrderPayload {
   orderId: string
   kind: 'tron'
+  /** Chain the gateway built the tx for (`tx.chain` on the wire). */
+  chain?: string
   tx: { to: string; data: string; value: string; feeLimit?: string }
 }
 
@@ -29,7 +33,7 @@ interface OnrampOrder {
 
 interface CallOrder {
   order_id: string
-  tx: { type?: string; to: string; data: string; value: string; feeLimit?: string }
+  tx: { type?: string; to: string; data: string; value: string; feeLimit?: string; chain?: string }
 }
 
 interface RawOrder {
@@ -88,6 +92,7 @@ export function orderPayload(
     return {
       orderId: o.order_id,
       kind: 'tron',
+      chain: tx.chain,
       tx: { to: tx.to, data: tx.data, value: tx.value, feeLimit: tx.feeLimit },
     }
   }
@@ -96,5 +101,10 @@ export function orderPayload(
       cause: order,
     })
   }
-  return { orderId: o.order_id, kind: 'evm', tx: { to: tx.to, data: tx.data, value: tx.value } }
+  return {
+    orderId: o.order_id,
+    kind: 'evm',
+    chain: tx.chain,
+    tx: { to: tx.to, data: tx.data, value: tx.value },
+  }
 }

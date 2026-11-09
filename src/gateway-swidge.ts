@@ -28,6 +28,7 @@ import type { OrderPayload } from './map/order.js'
 import type { RegisterTxV4, SwidgeSimulation } from './types.js'
 import { GatewaySwidgeError, ERR } from './errors.js'
 import { assertAllowanceHolderSpender } from './allowance-holder.js'
+import { assertOrderPayload, parseBaseUnits } from './order-guard.js'
 
 const BOB_BEARER_TOKEN = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
 
@@ -56,6 +57,12 @@ export interface GatewaySwidgeConfig {
   tronWeb?: TronOpts['tronWeb']
   tronProvider?: string
   tronConfirmTimeoutMs?: number
+  /**
+   * Cap on native `value` the order tx may send on top of the swapped amount — the LayerZero /
+   * CCIP messaging fee on ERC-20 token swaps — in the source chain's native base units (wei, sun).
+   * Defaults to a per-chain cap of roughly $10–20 (see `src/order-guard.ts`).
+   */
+  maxNativeFee?: bigint | number | string
   [key: string]: unknown
 }
 
@@ -74,6 +81,7 @@ export class GatewaySwidge extends SwidgeProtocol {
   private _fromChain: string | undefined
   private _refundAddress: string | undefined
   private _tronOpts: TronOpts
+  private _maxNativeFee: bigint | undefined
   private _spenderCache: Map<string, string>
 
   /**
@@ -105,6 +113,8 @@ export class GatewaySwidge extends SwidgeProtocol {
       tronProvider: config.tronProvider,
       confirmTimeoutMs: config.tronConfirmTimeoutMs,
     }
+    this._maxNativeFee =
+      config.maxNativeFee == null ? undefined : parseBaseUnits('maxNativeFee', config.maxNativeFee)
     this._spenderCache = new Map()
   }
 
@@ -192,7 +202,11 @@ export class GatewaySwidge extends SwidgeProtocol {
     config: Record<string, unknown> = {}
   ): Promise<SwidgeResult> {
     const { params, variant, srcFamily } = await this._buildQuoteParams(options)
-    const { quote, payload } = await this._createOrder(params, variant, srcFamily)
+    const maxNativeFee =
+      config.maxNativeFee == null
+        ? this._maxNativeFee
+        : parseBaseUnits('maxNativeFee', config.maxNativeFee)
+    const { quote, payload } = await this._createOrder(params, variant, srcFamily, maxNativeFee)
     const adapter = getAdapter(srcFamily)
 
     let txid: string
@@ -234,11 +248,15 @@ export class GatewaySwidge extends SwidgeProtocol {
     }
   }
 
-  /** Quote → create-order → payload, with the payload's family checked against the route's. */
+  /**
+   * Quote → create-order → payload. The payload's family is checked against the route's, and the
+   * transaction itself against what was asked for (`assertOrderPayload`), before anything signs.
+   */
   private async _createOrder(
     params: Record<string, string | undefined>,
     variant: 'onramp' | 'offramp' | 'tokenSwap',
-    srcFamily: string
+    srcFamily: string,
+    maxNativeFee: bigint | undefined = this._maxNativeFee
   ): Promise<{ quote: Record<string, unknown>; payload: OrderPayload }> {
     if (!params.refundAddress) {
       throw new GatewaySwidgeError(
@@ -248,10 +266,12 @@ export class GatewaySwidge extends SwidgeProtocol {
       )
     }
     const quote = (await this._client.getQuote(params)) as Record<string, unknown>
+    // Onramp quotes carry no srcChain (the source is always Bitcoin); every other variant must
+    // name the chain it was built for, so a quote for another chain can't pass by omission.
     const srcChain = (quote[variant] as { srcChain?: unknown } | undefined)?.srcChain
     if (
-      srcChain !== undefined &&
-      String(srcChain).toLowerCase() !== params.srcChain?.toLowerCase()
+      variant !== 'onramp' &&
+      (srcChain == null || String(srcChain).toLowerCase() !== params.srcChain?.toLowerCase())
     ) {
       throw new GatewaySwidgeError(
         ERR.VALIDATION,
@@ -264,6 +284,12 @@ export class GatewaySwidge extends SwidgeProtocol {
     >
     const payload = orderPayload(order, variant, quote)
     assertPayloadFamily(payload, srcFamily)
+    assertOrderPayload(payload, {
+      chain: params.srcChain!,
+      token: params.srcToken!,
+      amount: parseBaseUnits('fromTokenAmount', params.amount),
+      maxNativeFee,
+    })
     return { quote, payload }
   }
 

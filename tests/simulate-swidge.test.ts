@@ -14,6 +14,7 @@ import { MAX_UINT256 } from '../src/allowance-holder.js'
 import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
 import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
+import { CANONICAL_HOLDER, EVM_TOKEN, TRON_EXEC, execData } from './fixtures/exec.js'
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -50,12 +51,21 @@ function fakeClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
 function fakeEvmClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
   return {
     getQuote: vi.fn(async () => ({
-      offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' }, fees: {} },
+      offramp: {
+        inputAmount: { amount: '1000' },
+        outputAmount: { amount: '900' },
+        srcChain: 'base',
+      },
     })),
     createOrder: vi.fn(async () => ({
       offramp: {
         order_id: 'sim-order-evm',
-        tx: { to: '0x0000000000001fF3684f28c67538d4D072C22734', data: '0xdata', value: '0' },
+        tx: {
+          to: CANONICAL_HOLDER,
+          data: execData({ token: EVM_TOKEN, amount: 1000n }),
+          value: '0',
+          chain: 'base',
+        },
       },
     })),
     registerTx: vi.fn(async () => ({})),
@@ -82,7 +92,7 @@ function fakeTronClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
         tx: {
           type: 'tron',
           to: REGISTRY,
-          data: '0xfeed',
+          data: TRON_EXEC,
           value: '0',
           chain: 'tron',
           feeLimit: '100000000',
@@ -286,7 +296,7 @@ describe('GatewaySwidge.simulateSwidge()', () => {
     const client = fakeEvmClient()
     const sw = new GatewaySwidge(account, { fromChain: 'base', client })
     const result = await sw.simulateSwidge({
-      fromToken: '0xtok',
+      fromToken: EVM_TOKEN,
       toToken: 'BTC',
       toChain: 'bitcoin',
       recipient: 'bc1qrcpt',
@@ -317,7 +327,7 @@ describe('GatewaySwidge.simulateSwidge()', () => {
     const sw = new GatewaySwidge(account, { fromChain: 'base', client })
     // Must NOT throw
     const result = await sw.simulateSwidge({
-      fromToken: '0xtok',
+      fromToken: EVM_TOKEN,
       toToken: 'BTC',
       toChain: 'bitcoin',
       recipient: 'bc1qrcpt',
@@ -329,7 +339,7 @@ describe('GatewaySwidge.simulateSwidge()', () => {
       expect(result.evm.valid).toBe(false)
       expect(result.evm.reason).toBeTruthy()
       expect(result.evm.requiredApproval).toEqual({
-        token: '0xtok',
+        token: EVM_TOKEN,
         spender: '0x0000000000001fF3684f28c67538d4D072C22734',
         amount: MAX_UINT256,
       })

@@ -62,6 +62,7 @@ describe('orderPayload', () => {
     expect(orderPayload(order, 'offramp')).toEqual({
       orderId: 'o5',
       kind: 'tron',
+      chain: 'tron',
       tx: { to: 'TRegistry', data: '0xdata', value: '0', feeLimit: '100000000' },
     })
   })

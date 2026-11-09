@@ -301,6 +301,7 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 | `config.tronWeb`        | `object?`                                | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. Defaults to the account's own provider. |
 | `config.tronProvider`   | `string?`                                | Tron source routes only. Full-node URL to build a tronweb client from.                                                                     |
 | `config.tronConfirmTimeoutMs` | `number?`                          | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node — finite, `>= 0` (default `20000` ms).       |
+| `config.maxNativeFee`  | `bigint \| number \| string?`          | Cap on native `value` the order tx may send on top of the swapped amount (the LayerZero/CCIP messaging fee on ERC-20 token swaps), in wei/sun. Default: per-chain, ~$10–20 of gas token. Also accepted per call by `swidge(options, config)`. |
 
 Gateway V4 requires a `refundAddress` on every route before it will create an order (`MISSING_REFUND_ADDRESS` otherwise), encoded for the **source** chain: a Bitcoin address on an onramp, the EVM `0x…` or Tron Base58Check sender on an offramp or token swap. The module defaults it to the account's own address — the wallet the funds leave from — so a failed order refunds to where it came from. Set `config.refundAddress` (or `refundAddress` per call) to refund elsewhere on the same source chain. V3's `ownerAddress` no longer exists.
 
@@ -390,6 +391,7 @@ On Tron the allowance is read with a constant-contract call through the resolved
 
 - **Keys never leave the WDK account.** All signing is delegated to the account abstraction layer — `GatewaySwidge` never has direct key access.
 - **No external wallet dependencies.** This package does not depend on `viem`, `@gobob/bob-sdk`, or any other wallet library.
+- **The order tx is checked before signing.** Every create-order transaction must be `exec` on the pinned AllowanceHolder, built for the requested source chain, moving the source token and at most `fromTokenAmount` of it, with native value beyond the swap capped by `maxNativeFee` (and a Tron `feeLimit` capped at 100 TRX); an onramp's BTC amount must equal `fromTokenAmount`. Anything else is refused (`VALIDATION_ERROR`) before the account signs.
 - **Approval hygiene.** For offramp/tokenSwap routes, call `getRequiredApproval()` first and approve exactly what it returns — an unbounded allowance to the Gateway's AllowanceHolder, whose address the module pins per chain. Don't approve any other spender; revoke the allowance if you stop using the Gateway.
 - **BOB attribution key.** The default `bearerToken` is a shared gateway-wdk attribution token that attributes volume to BOB at 0 cost. Replace it with your own key only if you have a direct API agreement.
 

@@ -2,6 +2,7 @@ import { describe, test, expect, vi } from 'vitest'
 import { assertAllowanceHolderSpender, MAX_UINT256 } from '../src/allowance-holder.js'
 import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
+import { EVM_TOKEN, execData } from './fixtures/exec.js'
 
 const CANONICAL = '0x0000000000001fF3684f28c67538d4D072C22734'
 
@@ -32,30 +33,38 @@ describe('assertAllowanceHolderSpender', () => {
 })
 
 describe('GatewaySwidge unbounded approvals', () => {
-  const offrampClient = (to: string): GatewayClient =>
+  const offrampClient = (to: string, token = EVM_TOKEN, chain = 'base'): GatewayClient =>
     ({
       getQuote: vi.fn(async () => ({
-        offramp: { inputAmount: { amount: '1000' }, outputAmount: { amount: '900' } },
+        offramp: {
+          inputAmount: { amount: '1000' },
+          outputAmount: { amount: '900' },
+          srcChain: chain,
+        },
       })),
       createOrder: vi.fn(async () => ({
-        offramp: { order_id: 'o', tx: { to, data: '0xdata', value: '0' } },
+        offramp: {
+          order_id: 'o',
+          tx: { to, data: execData({ token, amount: 500n }), value: '0', chain },
+        },
       })),
       registerTx: vi.fn(),
     }) as unknown as GatewayClient
 
   const route = {
-    fromToken: '0xtok',
+    fromToken: EVM_TOKEN,
     toToken: 'BTC',
     toChain: 'bitcoin',
     recipient: 'bc1qrcpt',
     fromTokenAmount: 500n,
   }
 
-  test('getRequiredApproval refuses an unbounded approval to a non-AllowanceHolder spender', async () => {
+  test('getRequiredApproval refuses an order (hence spender) that is not the AllowanceHolder', async () => {
     const account = { getAddress: async () => '0xsender', getAllowance: vi.fn(async () => 0n) }
     const sw = new GatewaySwidge(account, { fromChain: 'base', client: offrampClient('0xevil') })
     await expect(sw.getRequiredApproval(route)).rejects.toThrow(
-      /refusing to approve 0xevil on chain "base"/
+      'refusing to sign the order: order tx targets 0xevil, expected the AllowanceHolder at ' +
+        CANONICAL.toLowerCase()
     )
   })
 
@@ -64,7 +73,7 @@ describe('GatewaySwidge unbounded approvals', () => {
     const account = { getAddress: async () => '0xsender', getAllowance: vi.fn(async () => 100n) }
     const sw = new GatewaySwidge(account, {
       fromChain: 'ethereum',
-      client: offrampClient(CANONICAL),
+      client: offrampClient(CANONICAL, usdt, 'ethereum'),
     })
     expect(await sw.getRequiredApproval({ ...route, fromToken: usdt })).toEqual({
       token: usdt,
@@ -74,10 +83,16 @@ describe('GatewaySwidge unbounded approvals', () => {
     })
   })
 
-  test('no approval needed → no spender check (allowance already covers the order)', async () => {
+  test('allowance already covers the order → no approval', async () => {
+    const account = { getAddress: async () => '0xsender', getAllowance: vi.fn(async () => 500n) }
+    const sw = new GatewaySwidge(account, { fromChain: 'base', client: offrampClient(CANONICAL) })
+    expect(await sw.getRequiredApproval(route)).toBeNull()
+  })
+
+  test('the order tx is pinned even when no approval is due', async () => {
     const account = { getAddress: async () => '0xsender', getAllowance: vi.fn(async () => 500n) }
     const sw = new GatewaySwidge(account, { fromChain: 'base', client: offrampClient('0xother') })
-    expect(await sw.getRequiredApproval(route)).toBeNull()
+    await expect(sw.getRequiredApproval(route)).rejects.toThrow(/order tx targets 0xother/)
   })
 
   test('simulateSwidge refuses to report an approval for a non-AllowanceHolder spender', async () => {
@@ -87,6 +102,6 @@ describe('GatewaySwidge unbounded approvals', () => {
       quoteSendTransaction: vi.fn(async () => ({ fee: 1n })),
     }
     const sw = new GatewaySwidge(account, { fromChain: 'base', client: offrampClient('0xevil') })
-    await expect(sw.simulateSwidge(route)).rejects.toThrow(/refusing to approve 0xevil/)
+    await expect(sw.simulateSwidge(route)).rejects.toThrow(/order tx targets 0xevil/)
   })
 })
