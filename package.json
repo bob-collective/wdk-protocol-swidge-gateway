@@ -100,23 +100,5 @@
     "vite": "8.3.6",
     "vitest": "5.1.0"
   },
-  "license": "Apache-2.0",
-  "pnpm": {
-    "auditConfig": {
-      "ignoreGhsas": [
-        "GHSA-vh66-26gq-q6x8",
-        "GHSA-9fr6-4gfg-395g",
-        "GHSA-c29m-xwm3-cm6r",
-        "GHSA-mghh-pgcx-3jjj",
-        "GHSA-x97p-jq2g-jp4f",
-        "GHSA-3pq3-5fj3-cg6v",
-        "GHSA-542g-h47m-68v8",
-        "GHSA-j8rh-479h-cp32",
-        "GHSA-4hqw-qxg8-jxx2",
-        "GHSA-m8m8-qj5v-23w3",
-        "GHSA-44g4-m2mj-wpvx",
-        "GHSA-r4gj-5m52-g5wh"
-      ]
-    }
-  }
+  "license": "Apache-2.0"
 }
