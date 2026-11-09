@@ -83,6 +83,40 @@ export function tokenSwapOrder() {
   }
 }
 
+export const BTC_SENDER = 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'
+export const EVM_RECIPIENT = '0x000000000000000000000000000000000000dEaD'
+/** A taproot deposit address, as create-order hands them out. */
+export const DEPOSIT_ADDRESS = 'bc1pk09yz29n9sslvzat09hnjd5se3u3pdxc2tl3ec7am6uc6q7htrdqv0cleg'
+
+/** get-quote: 50,000 sats → USDT on Base. The onramp echoes slippage as a string. */
+export function onrampQuote() {
+  return {
+    onramp: {
+      inputAmount: { amount: '50000', address: ZERO, chain: 'bitcoin', usd: '37.26' },
+      outputAmount: { amount: '37141289', address: USDT_BASE, chain: 'base', usd: '37.06' },
+      sender: BTC_SENDER,
+      recipient: EVM_RECIPIENT,
+      slippage: '50',
+      feeBreakdown: {
+        solverFee: { amount: '373', address: USDT_ETHEREUM, chain: 'ethereum', usd: '0' },
+        protocolFee: { amount: '0', address: USDT_ETHEREUM, chain: 'ethereum', usd: '0' },
+        affiliateFee: { amount: '0', address: USDT_ETHEREUM, chain: 'ethereum', usd: '0' },
+        executionFee: { amount: '195982', address: USDT_ETHEREUM, chain: 'ethereum', usd: '0.20' },
+        layerzeroFee: { amount: '0', address: USDT_ETHEREUM, chain: 'ethereum', usd: '0' },
+      },
+      dstChain: 'base',
+      dstToken: USDT_BASE,
+      estimatedTimeInSecs: 616,
+      priceImpact: '-0.0002' as string | null,
+    },
+  }
+}
+
+/** create-order for `onrampQuote`: the deposit address only — the amount comes from the quote. */
+export function onrampOrder() {
+  return { onramp: { order_id: 'order-onramp', address: DEPOSIT_ADDRESS } }
+}
+
 /** get-order: a completed BTC → USDC-on-Ethereum onramp. */
 export function completedOrder() {
   return {
