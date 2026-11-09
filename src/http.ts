@@ -1,4 +1,15 @@
+import { GatewaySwidgeError, ERR } from './errors.js'
+
+/** HTTP transport the gateway client sends its requests through. */
 export interface HttpTransport {
+  /**
+   * Sends a request with a JSON body and returns the status and parsed JSON body.
+   *
+   * @param method - The HTTP method.
+   * @param url - The request URL.
+   * @param [opts] - The query parameters (undefined values left out), JSON body and headers.
+   * @returns The response status and its JSON-parsed body (`null` when empty or not JSON).
+   */
   request(
     method: string,
     url: string,
@@ -12,7 +23,11 @@ export interface HttpTransport {
 
 export function createDefaultTransport(deps: { fetch?: typeof globalThis.fetch } = {}): HttpTransport {
   const fetchFn = deps.fetch || globalThis.fetch
-  if (!fetchFn) throw new Error('No fetch available; pass config.http for this runtime')
+  if (!fetchFn)
+    throw new GatewaySwidgeError(
+      ERR.NOT_SUPPORTED,
+      'No fetch available; pass config.http for this runtime'
+    )
   return {
     async request(method, url, opts = {}) {
       const { query, body, headers } = opts
