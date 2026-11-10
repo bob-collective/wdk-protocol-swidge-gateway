@@ -9,14 +9,22 @@ export const BTC_ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
  * the raw zero-address and the readable identifier both work.
  */
 export function resolveTokenId(token: string): string {
-  return token && token.toLowerCase() === 'btc' ? BTC_ZERO_ADDRESS : token
+  return isBtcAlias(token) ? BTC_ZERO_ADDRESS : token
+}
+
+/** Whether `token` is the `'BTC'` alias (case-insensitive) for native bitcoin. */
+export function isBtcAlias(token: unknown): boolean {
+  return typeof token === 'string' && token.toLowerCase() === 'btc'
 }
 
 const MAX_AFFILIATES = 5
 const MAX_TOTAL_BPS = 1000
 
+/** An affiliate fee recipient. */
 export interface Affiliate {
+  /** The address the affiliate fee is paid to. */
   address: string
+  /** The affiliate fee in basis points of the input amount. */
   bps: number
 }
 

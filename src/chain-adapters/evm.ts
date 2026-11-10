@@ -3,15 +3,24 @@ import { MAX_UINT256 } from '../allowance-holder.js'
 
 const ZERO = '0x0000000000000000000000000000000000000000'
 
+/** The zero address stands for the chain's gas token, which needs no approval. */
+export function isNativeToken(tokenAddress: string): boolean {
+  return tokenAddress.toLowerCase() === ZERO
+}
+
 /**
  * USDT on Ethereum mainnet. Its non-standard `approve` reverts when changing a non-zero allowance
  * to another non-zero value, and WDK's `WalletAccountEvm.approve` refuses that case up front.
  */
 const ETHEREUM_USDT = '0xdac17f958d2ee523a2206206994597c13d831ec7'
 
+/** An ERC-20/TRC-20 approval the account must grant before a swidge. */
 export interface EvmRequiredApproval {
+  /** The token to approve. */
   token: string
+  /** The spender: the gateway's AllowanceHolder on the source chain. */
   spender: string
+  /** The allowance to grant: unbounded (`2^256 − 1`). */
   amount: bigint
   /**
    * Present (always `true`) when the current allowance must first be reset to 0 —
@@ -37,9 +46,13 @@ function isAa(account: object): boolean {
   )
 }
 
+/** The EVM transaction of a gateway order. */
 interface EvmTx {
+  /** The contract the transaction calls. */
   to: string
+  /** The calldata. */
   data: string
+  /** The native value sent, in wei. */
   value: string
 }
 
@@ -48,18 +61,24 @@ interface EvmPayload {
   [key: string]: unknown
 }
 
-interface EvmAccount {
+export interface EvmAccount {
   getAllowance?: (token: string, spender: string) => Promise<bigint>
   sendTransaction: (txOrArray: EvmTx | EvmTx[], config?: unknown) => Promise<{ hash: string }>
   quoteSendTransaction?: (tx: EvmTx) => Promise<{ fee?: bigint; gas?: bigint }>
   [key: string]: unknown
 }
 
+/** Dry run of an EVM source transaction. */
 export interface EvmSimulateResult {
+  /** The order transaction. */
   tx: EvmTx
+  /** The account's estimate for it (`fee`, else `gas`), or `null` when it cannot estimate. */
   gasEstimate: bigint | null
+  /** The approval still required before the order can execute, or `null`. */
   requiredApproval: EvmRequiredApproval | null
+  /** Whether the estimate succeeded. */
   valid: boolean
+  /** Why the estimate failed, when `valid` is `false`. */
   reason?: string
 }
 
@@ -81,7 +100,7 @@ export const evmAdapter = {
     amount: bigint | string | number,
     opts: { chain?: string } = {}
   ): Promise<EvmRequiredApproval | null> {
-    if (!tokenAddress || tokenAddress.toLowerCase() === ZERO) return null
+    if (!tokenAddress || isNativeToken(tokenAddress)) return null
     const allowance = BigInt(await account.getAllowance!(tokenAddress, spender))
     if (allowance >= BigInt(amount)) return null
     const approval = { token: tokenAddress, spender, amount: MAX_UINT256 }

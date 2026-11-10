@@ -1,8 +1,9 @@
 // Route: BTC → USDT on Base. Sends BTC from a Bitcoin account and receives USDT on Base.
 import { GatewaySwidge } from '../src/index.js'
 import type { HttpTransport } from '../src/http.js'
+import type { IWalletAccount } from '../src/index.js'
 
-export async function run({ account, http }: { account?: unknown; http?: HttpTransport }) {
+export async function run({ account, http }: { account: IWalletAccount; http?: HttpTransport }) {
   const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', http })
   return sw.swidge({
     fromToken: 'BTC',

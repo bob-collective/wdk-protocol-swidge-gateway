@@ -16,6 +16,7 @@
  *   TRON_RPC_URL    — Tron full-node endpoint (default: https://tron-rpc.publicnode.com)
  *   AMOUNT_SATS     — BTC onramp amount in satoshis (default: 30000, ~$30 — fits a $50 test wallet with fee headroom)
  *   AMOUNT_USDT     — USDT offramp amount in smallest unit (default: 50000000 = 50 USDT)
+ *   AMOUNT_ETH      — native ETH offramp amount in wei (default: 2e16 = 0.02 ETH; simulated only)
  */
 
 import { describe, test, expect } from 'vitest'
@@ -38,6 +39,8 @@ const RUN = !!process.env.TEST_SEED
     const TRON_RPC = process.env.TRON_RPC_URL ?? 'https://tron-rpc.publicnode.com'
     const AMOUNT_SATS = BigInt(process.env.AMOUNT_SATS ?? '30000')
     const AMOUNT_USDT = BigInt(process.env.AMOUNT_USDT ?? '50000000')
+    // Above the gateway's native offramp minimum (~0.01 ETH); never spent, so no balance needed.
+    const AMOUNT_ETH = BigInt(process.env.AMOUNT_ETH ?? '20000000000000000')
 
     // Lazily resolved — only populated once the first test runs.
     let btcAddress: string
@@ -152,6 +155,26 @@ const RUN = !!process.env.TEST_SEED
       }
     })
 
+    // A native source is wrapped in the same exec() as an ERC-20 one — zero-address token, the
+    // amount paid as `value` — which the order guard relies on. Catches the gateway changing that
+    // shape. No balance needed: the guard runs before simulate, which reports a failed estimate
+    // as `valid: false` rather than throwing.
+    test('simulateSwidge: offramp ETH@ethereum → BTC — native-source order passes the order guard', async () => {
+      const { GatewaySwidge } = await import('../../src/index.js')
+      const sw = new GatewaySwidge(evmAccount, { fromChain: 'ethereum' })
+      const sim = await sw.simulateSwidge({
+        fromToken: BTC_ZERO,
+        toToken: BTC_ZERO,
+        toChain: 'bitcoin',
+        recipient: btcAddress,
+        fromTokenAmount: AMOUNT_ETH,
+      })
+      expect(sim.broadcast).toBe(false)
+      if (!('evm' in sim)) throw new Error('expected an evm simulation')
+      expect(sim.evm.tx.value).toBe(String(AMOUNT_ETH))
+      expect(sim.evm.requiredApproval).toBeNull()
+    })
+
     // ── Tron as source ───────────────────────────────────────────────────────
 
     test('quoteSwidge: offramp USDT@tron → BTC', async () => {
@@ -204,6 +227,31 @@ const RUN = !!process.env.TEST_SEED
           fee: expect.anything(),
         })
       }
+    })
+
+    // getSupportedTokens() omits tokens missing from src/tokens.ts, and getSupportedChains() gives
+    // unknown chains no native token — so a route the gateway adds must land in both tables.
+    test('every live route chain and token has metadata (else: pnpm gen:tokens)', async () => {
+      const { GatewayClient } = await import('../../src/index.js')
+      const { CHAINS } = await import('../../src/chains.js')
+      const { TOKENS } = await import('../../src/tokens.js')
+      const { tokenKey } = await import('../../src/map/routes.js')
+      const routes = (await new GatewayClient().getRoutes()) as {
+        srcChain: string
+        dstChain: string
+        srcToken: string
+        dstToken: string
+      }[]
+      expect(routes.length).toBeGreaterThan(0)
+      const pairs = routes.flatMap((r) => [
+        [r.srcChain, r.srcToken],
+        [r.dstChain, r.dstToken],
+      ])
+      const missingChains = [...new Set(pairs.map(([c]) => c))].filter((c) => !CHAINS[c])
+      const missingTokens = [...new Set(pairs.map(([c, t]) => tokenKey(c, t)))].filter(
+        (k) => !TOKENS[k]
+      )
+      expect({ missingChains, missingTokens }).toEqual({ missingChains: [], missingTokens: [] })
     })
   }
 )

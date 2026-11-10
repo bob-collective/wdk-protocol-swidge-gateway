@@ -4,7 +4,8 @@ import { MAX_UINT256 } from '../allowance-holder.js'
 const APPROVE_SELECTOR = 'approve(address,uint256)'
 const ALLOWANCE_SELECTOR = 'allowance(address,address)'
 
-const DEFAULT_FEE_LIMIT_SUN = 100_000_000
+/** The `feeLimit` (sun) an order call gets when the gateway sends none; the order guard assumes it. */
+export const DEFAULT_FEE_LIMIT_SUN = 100_000_000
 
 const BROADCAST_CONFIRM_TIMEOUT_MS = 20_000
 const BROADCAST_POLL_INTERVAL_MS = 1_500
@@ -17,13 +18,17 @@ const NATIVE_TOKENS = new Set([
 ])
 
 /** Base58Check is case-sensitive, so match it verbatim; hex is not, so also try lowercased. */
-function isNativeToken(tokenAddress: string): boolean {
+export function isNativeToken(tokenAddress: string): boolean {
   return NATIVE_TOKENS.has(tokenAddress) || NATIVE_TOKENS.has(tokenAddress.toLowerCase())
 }
 
+/** A Tron transaction as a node builds it, before signing. */
 export interface TronPrebuiltTx {
+  /** The transaction id: sha256 of `raw_data_hex`. */
   txID: string
+  /** The decoded transaction. */
   raw_data: Record<string, unknown>
+  /** The protobuf-encoded transaction. */
   raw_data_hex: string
   [key: string]: unknown
 }
@@ -33,9 +38,13 @@ export interface TronPrebuiltTx {
  * (wdk-wallet-tron ≥ 1.0.0-beta.8).
  */
 export interface TronApprovalCall {
+  /** The TRC-20 token contract. */
   contractAddress: string
+  /** `approve(address,uint256)`. */
   functionSelector: typeof APPROVE_SELECTOR
+  /** The spender and the amount. */
   parameters: { type: string; value: string }[]
+  /** The fee limit in sun. */
   options: { feeLimit: number }
 }
 
@@ -44,8 +53,11 @@ interface TronNodeStatus {
   Error?: string
 }
 
+/** The part of a tronweb instance this module uses: building and reading contract calls. */
 export interface TronWebLike {
+  /** Builds and simulates contract calls. */
   transactionBuilder: {
+    /** Builds an unsigned contract-call transaction. */
     triggerSmartContract(
       contractAddress: string,
       functionSelector: string,
@@ -53,6 +65,7 @@ export interface TronWebLike {
       parameters: unknown[],
       issuerAddress: string
     ): Promise<TronNodeStatus & { transaction?: TronPrebuiltTx }>
+    /** Runs a contract call without broadcasting it. */
     triggerConstantContract(
       contractAddress: string,
       functionSelector: string,
@@ -61,12 +74,14 @@ export interface TronWebLike {
       issuerAddress: string
     ): Promise<TronNodeStatus & { constant_result?: string[] }>
   }
+  /** Reads chain state; `swidge()` needs it to confirm a Tron broadcast. */
   trx?: {
+    /** Returns a transaction the node knows, by id. */
     getTransaction(transactionID: string): Promise<unknown>
   }
 }
 
-interface TronAccount {
+export interface TronAccount {
   getAddress(): string | Promise<string>
   sendTransaction?: (tx: TronPrebuiltTx) => Promise<{ hash: string }>
   quoteSendTransaction?: (tx: TronPrebuiltTx) => Promise<{ fee?: bigint | number }>
@@ -80,10 +95,15 @@ export interface TronOpts {
   confirmTimeoutMs?: number
 }
 
+/** The Tron transaction of a gateway order. */
 interface TronTx {
+  /** The contract the transaction calls (Base58Check). */
   to: string
+  /** The calldata. */
   data: string
+  /** The TRX value sent, in sun. */
   value: string
+  /** The fee limit in sun. */
   feeLimit?: string
 }
 
@@ -92,11 +112,17 @@ interface TronPayload {
   [key: string]: unknown
 }
 
+/** Dry run of a Tron source transaction. */
 export interface TronSimulateResult {
+  /** The order transaction. */
   tx: TronTx
+  /** The account's fee estimate for it in sun, or `null` when it cannot estimate. */
   feeEstimate: bigint | null
+  /** The approval still required before the order can execute, or `null`. */
   requiredApproval: { token: string; spender: string; amount: bigint } | null
+  /** Whether building and estimating the transaction succeeded. */
   valid: boolean
+  /** Why it failed, when `valid` is `false`. */
   reason?: string
 }
 
@@ -488,6 +514,14 @@ export const tronAdapter = {
   },
 }
 
+/**
+ * Builds the TRC-20 `approve` call for an approval `getRequiredApproval()` returned, to send with
+ * `WalletAccountTron.sendTransaction` (which has no `approve`).
+ *
+ * @param approval - The token, spender and amount to approve.
+ * @param [opts] - The fee limit in sun (default: 100,000,000).
+ * @returns The contract call.
+ */
 export function buildTronApproval(
   approval: { token: string; spender: string; amount: bigint | string | number },
   opts: { feeLimit?: number } = {}

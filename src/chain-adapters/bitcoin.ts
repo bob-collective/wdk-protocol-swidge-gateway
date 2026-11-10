@@ -4,10 +4,10 @@ import { GatewaySwidgeError, ERR } from '../errors.js'
 
 // Taproot (P2TR) deposit addresses cannot be parsed without an ECC library. Register ours here
 // rather than relying on a wdk-wallet-btc version that happens to share our bitcoinjs-lib copy
-// and initialize it for us — see tests/taproot-ecc.test.ts.
+// and initialize it for us — see the taproot deposit test in tests/simulate-swidge.test.ts.
 initEccLib(ecc)
 
-interface BtcAccount {
+export interface BtcAccount {
   getAddress(): string | Promise<string>
   signTransaction?: (params: {
     to: string
@@ -22,10 +22,15 @@ interface BtcPayload {
   [key: string]: unknown
 }
 
+/** Dry run of an onramp's source transaction. */
 export interface BtcSimulateResult {
+  /** The signed, unbroadcast Bitcoin transaction. */
   signedTxHex: string
+  /** Its txid. */
   txid: string
+  /** Whether the transaction pays the order's deposit address at least the quoted amount. */
   valid: boolean
+  /** Satoshis the transaction pays to the deposit address. */
   paidToDeposit: bigint
 }
 
