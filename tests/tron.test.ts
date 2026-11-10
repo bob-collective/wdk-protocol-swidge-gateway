@@ -715,6 +715,7 @@ describe('getRequiredApproval', () => {
   ])('returns null for native TRX spelled %s, without an allowance read', async (native) => {
     const quote = tronOfframpQuote()
     quote.offramp.inputAmount.address = native
+    quote.offramp.tokenAddress = native
     getQuote.mockResolvedValue(quote)
     // A native source is exec'd as the zero-address token, its amount paid as call value.
     createOrder.mockResolvedValue(

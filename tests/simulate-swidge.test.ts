@@ -286,6 +286,7 @@ describe('simulateSwidge: EVM offramp', () => {
     quote.offramp.srcChain = 'ethereum'
     quote.offramp.inputAmount.chain = 'ethereum'
     quote.offramp.inputAmount.address = USDT_ETHEREUM
+    quote.offramp.tokenAddress = USDT_ETHEREUM
     getQuote.mockResolvedValue(quote)
     const order = offrampOrder()
     const tx = { ...ORDER_TX, data: execData({ token: USDT_ETHEREUM, amount: 100_000_000n }) }

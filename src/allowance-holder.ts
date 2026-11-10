@@ -13,7 +13,8 @@ const ALLOWANCE_HOLDER_SELF_DEPLOYED = '0x8fd545b348e84deb145f0179a00c671f0b9519
 /** Gateway self-deployed AllowanceHolder on Tron (`TAfbit1ENsRmtZbPQfYU3srURpfYuWYS7K`). */
 const ALLOWANCE_HOLDER_TRON = '0x07a39ae4c49dee86e892450b20881f32cd5d500d'
 
-// Mirrors bob-sdk `sdk/src/gateway/allowance-holder.ts`. Keep the two in step.
+// Mirrors bob-sdk `sdk/src/gateway/allowance-holder.ts`. Keep the two in step. Every holder here
+// must reject an ERC-20 `exec` target (0x's `ConfusedDeputy()` check): see `assertOrderPayload`.
 const ALLOWANCE_HOLDER_BY_CHAIN: Record<string, string> = {
   bob: ALLOWANCE_HOLDER_SELF_DEPLOYED,
   tron: ALLOWANCE_HOLDER_TRON,

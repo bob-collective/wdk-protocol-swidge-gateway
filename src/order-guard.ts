@@ -144,10 +144,11 @@ function nativeFeeCap(ctx: OrderGuardContext): bigint | undefined {
   return ctx.maxNativeFee ?? DEFAULT_MAX_NATIVE_FEE[ctx.chain.toLowerCase()]
 }
 
+/** @returns The native value the order sends beyond the swapped amount. */
 function assertContractCall(
   payload: Exclude<OrderPayload, { kind: 'btc' }>,
   ctx: OrderGuardContext
-): void {
+): bigint {
   const { tx } = payload
   // The wallet signs on its own chain; an order built for another one could not be indexed.
   if (payload.chain == null || !sameChain(payload.chain, ctx.chain)) {
@@ -184,7 +185,7 @@ function assertContractCall(
   const value = txUint('value', tx.value, 0n, tx)
   // A native source pays its amount as `value`; anything beyond that is a fee, capped.
   const extra = token === ZERO ? value - ctx.amount : value
-  if (extra <= 0n) return
+  if (extra <= 0n) return 0n
   const cap = nativeFeeCap(ctx)
   if (cap === undefined) {
     refuse(
@@ -199,6 +200,7 @@ function assertContractCall(
       tx
     )
   }
+  return extra
 }
 
 /**
@@ -224,11 +226,19 @@ function assertContractCall(
  * The GatewayRouter (`exec`'s operator and target) is deliberately not pinned. It forwards the
  * pulled tokens to an arbitrary inner call (registry, OFT, aggregator…), so a hostile order could
  * misroute them through the real router just as well; what bounds the loss is the `token`/`amount`
- * the holder lets it pull, checked here.
+ * the holder lets it pull, checked here. That bound rests on the holder refusing a token as
+ * `target`: `exec` calls `target` as the holder, the spender of every unbounded approval, so a
+ * `target` of `token.transferFrom(account, attacker, balance)` would move the whole approved
+ * balance of any token, not one order's worth. 0x's AllowanceHolder rejects that confused deputy
+ * (`_rejectIfERC20`, reverting `ConfusedDeputy()`), and every holder pinned in
+ * `src/allowance-holder.ts` — the gateway's own on BOB and Tron included — carries the check
+ * (verified against the deployed bytecode, 2026-11-10). A holder added to that table must too.
  *
+ * @returns The native value the order tx sends beyond the swapped amount — the messaging fee,
+ *   paid on top of the swap — or 0n (always 0n on an onramp).
  * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the payload does not match.
  */
-export function assertOrderPayload(payload: OrderPayload, ctx: OrderGuardContext): void {
+export function assertOrderPayload(payload: OrderPayload, ctx: OrderGuardContext): bigint {
   if (payload.kind === 'btc') {
     if (payload.amount !== ctx.amount) {
       refuse(
@@ -236,7 +246,7 @@ export function assertOrderPayload(payload: OrderPayload, ctx: OrderGuardContext
         payload
       )
     }
-    return
+    return 0n
   }
-  assertContractCall(payload, ctx)
+  return assertContractCall(payload, ctx)
 }

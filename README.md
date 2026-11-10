@@ -305,7 +305,7 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 | `config.tronConfirmTimeoutMs` | `number?`                          | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node — finite, `>= 0` (default `20000` ms).       |
 | `config.maxNetworkFeeBps`  | `number \| bigint?`                     | Refuse a `swidge()` whose network fees exceed this many bps of the input (compared in USD; fails closed without a price). Not checked on token swaps, which report no fees. |
 | `config.maxProtocolFeeBps` | `number \| bigint?`                     | Same, for the Gateway protocol fee.                                                                                                        |
-| `config.maxNativeFee`  | `bigint \| number \| string?`          | Cap on native `value` the order tx may send on top of the swapped amount (the LayerZero/CCIP messaging fee on ERC-20 token swaps), in wei/sun. Default: per-chain, ~$10–20 of gas token. Also accepted per call — `swidge`, `simulateSwidge` and `getRequiredApproval` all take `(options, { maxNativeFee })`; pass the same value to each. |
+| `config.maxNativeFee`  | `bigint \| number \| string?`          | Cap on native `value` the order tx may send on top of the swapped amount (the LayerZero/CCIP messaging fee on ERC-20 token swaps), in wei/sun. Requires `config.fromChain` and applies only to calls from it (others get their chain's default). Default: per-chain, ~$10–20 of gas token. Also accepted per call — `swidge`, `simulateSwidge` and `getRequiredApproval` all take `(options, { maxNativeFee })`; pass the same value to each. |
 
 Gateway V4 requires a `refundAddress` on every route before it will create an order (`MISSING_REFUND_ADDRESS` otherwise), encoded for the **source** chain: a Bitcoin address on an onramp, the EVM `0x…` or Tron Base58Check sender on an offramp or token swap. The module defaults it to the account's own address — the wallet the funds leave from — so a failed order refunds to where it came from. Set `config.refundAddress` (or `refundAddress` per call) to refund elsewhere on the same source chain. V3's `ownerAddress` no longer exists.
 
@@ -330,13 +330,13 @@ Returns a quote without executing a transaction. Useful for displaying expected 
 
 #### `swidge(options, config?) → Promise<SwidgeResult>`
 
-Executes a swidge. `config` takes per-call `maxNetworkFeeBps` / `maxProtocolFeeBps` and `paymasterToken`. Throws `AccountRequiredError` up front for an account that cannot sign; before creating the order, checks that the quote matches the request (amount, recipient, refund address, tokens), then `minAmountOut` and the fee caps. Returns:
+Executes a swidge. `config` takes per-call `maxNetworkFeeBps` / `maxProtocolFeeBps` and `paymasterToken`. Throws `AccountRequiredError` up front for an account that cannot sign; before creating the order, checks that the quote matches the request (amount, recipient, sender, refund address, tokens, affiliates and their bps), then `minAmountOut` and the fee caps. Returns:
 
 | Field              | Type                  | Description                                     |
 | ------------------ | --------------------- | ----------------------------------------------- |
 | `id`               | `string`              | Gateway order ID — pass to `getSwidgeStatus()`. |
 | `hash`             | `string`              | Source-chain transaction hash or TXID.          |
-| `fees`             | `SwidgeFee[]`         | Fee lines from the quote.                       |
+| `fees`             | `SwidgeFee[]`         | Fee lines from the quote, plus any native messaging fee the order tx paid on top (`included: false`). |
 | `transactions`     | `SwidgeTransaction[]` | The source transaction.                         |
 | `fromTokenAmount`  | `bigint`              | Actual input amount.                            |
 | `toTokenAmount`    | `bigint`              | Expected output amount.                         |

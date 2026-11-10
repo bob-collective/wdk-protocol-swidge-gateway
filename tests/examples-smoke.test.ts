@@ -10,6 +10,9 @@ import { OWNER, REGISTRY, TRON_EXEC, TRON_EXEC_HEX, USDT, buildTronTx } from './
 const request = vi.fn()
 const http = { request }
 
+/** The quote stubs echo the request, as the gateway does. */
+type RequestOpts = { query?: Record<string, string | undefined> }
+
 const MAX_UINT256 = 2n ** 256n - 1n
 
 beforeEach(() => {
@@ -27,14 +30,16 @@ describe('BTC examples', () => {
   }
 
   beforeEach(() => {
-    request.mockImplementation(async (_method: string, url: string) => {
+    request.mockImplementation(async (_method: string, url: string, opts: RequestOpts = {}) => {
       if (url.endsWith('/v4/get-quote')) {
+        const q = opts.query!
         return {
           status: 200,
           body: {
             onramp: {
-              inputAmount: { amount: '100000', chain: 'bitcoin' },
-              outputAmount: { amount: '99000', chain: 'base' },
+              inputAmount: { amount: '100000', address: q.srcToken, chain: 'bitcoin' },
+              outputAmount: { amount: '99000', address: q.dstToken, chain: 'base' },
+              recipient: q.recipient,
             },
           },
         }
@@ -127,15 +132,18 @@ describe('Tron offramp example', () => {
   }
 
   beforeEach(() => {
-    request.mockImplementation(async (_method: string, url: string) => {
+    request.mockImplementation(async (_method: string, url: string, opts: RequestOpts = {}) => {
       if (url.endsWith('/v4/get-quote')) {
+        const q = opts.query!
         return {
           status: 200,
           body: {
             offramp: {
-              inputAmount: { amount: '1000000', chain: 'tron' },
-              outputAmount: { amount: '950', chain: 'bitcoin' },
+              inputAmount: { amount: '1000000', address: q.srcToken, chain: 'tron' },
+              outputAmount: { amount: '950', address: q.dstToken, chain: 'bitcoin' },
               srcChain: 'tron',
+              recipient: q.recipient,
+              refundAddress: q.refundAddress,
             },
           },
         }

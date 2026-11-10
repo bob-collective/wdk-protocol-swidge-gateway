@@ -112,6 +112,25 @@ describe('swidge: onramp', () => {
     })
   })
 
+  // The onramp quote repeats the destination token as a top-level `dstToken`: both echoes must
+  // name the requested token, or the quote could pass on one while create-order reads the other.
+  test('a quote whose dstToken differs from the requested token is refused', async () => {
+    const quote = onrampQuote()
+    quote.onramp.dstToken = USDT_ETHEREUM
+    getQuote.mockResolvedValue(quote)
+    const account = new DummyBtcAccount()
+    const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
+
+    await expect(sw.swidge(ONRAMP)).rejects.toMatchObject(
+      gatewayError(
+        ERR.VALIDATION,
+        `quote destination token ${USDT_ETHEREUM} does not match the requested ${USDT_BASE}`
+      )
+    )
+    expect(createOrder).not.toHaveBeenCalled()
+    expect(account.signTransaction).not.toHaveBeenCalled()
+  })
+
   test('passes config.feeRate to the signer', async () => {
     const account = new DummyBtcAccount()
     const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', feeRate: 12, client })

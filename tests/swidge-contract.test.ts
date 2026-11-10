@@ -264,16 +264,43 @@ describe('quote binding', () => {
       'bc1qrcpt',
     ],
     ['refundAddress', (q: Quote) => (q.offramp!.refundAddress = '0xother'), '0xother', '0xsender'],
+    ['sender', (q: Quote) => (q.offramp!.sender = '0xother'), '0xother', '0xsender'],
     [
       'source token',
       (q: Quote) => (q.offramp!.inputAmount.address = USDC_BASE),
       USDC_BASE,
       USDT_BASE,
     ],
+    ['source token', (q: Quote) => (q.offramp!.tokenAddress = USDC_BASE), USDC_BASE, USDT_BASE],
     [
       'destination token',
       (q: Quote) => (q.offramp!.outputAmount.address = USDT_BASE),
       USDT_BASE,
+      ZERO,
+    ],
+    // Echoes that bind the route can't be dropped to dodge the comparison.
+    [
+      'recipient',
+      (q: Quote) => delete (q.offramp as { recipient?: string }).recipient,
+      'undefined',
+      'bc1qrcpt',
+    ],
+    [
+      'refundAddress',
+      (q: Quote) => delete (q.offramp as { refundAddress?: string }).refundAddress,
+      'undefined',
+      '0xsender',
+    ],
+    [
+      'source token',
+      (q: Quote) => delete (q.offramp!.inputAmount as { address?: string }).address,
+      'undefined',
+      USDT_BASE,
+    ],
+    [
+      'destination token',
+      (q: Quote) => delete (q.offramp!.outputAmount as { address?: string }).address,
+      'undefined',
       ZERO,
     ],
     ['source chain', (q: Quote) => (q.offramp!.inputAmount.chain = 'ethereum'), 'ethereum', 'base'],
@@ -524,6 +551,77 @@ describe('affiliate binding', () => {
 
     await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
       gatewayError(ERR.VALIDATION, 'quote pays affiliate 0xevil, which the request did not include')
+    )
+    expect(createOrder).not.toHaveBeenCalled()
+  })
+
+  // The quote echoes affiliate fees as amounts, not bps, in another token than the input — so they
+  // are held to the requested bps by USD value (input $99.82). Lenient by design: a fee is refused
+  // only when it clearly exceeds the rate, past cent rounding and 1% of price drift — at 10 bps,
+  // above $0.005 + $99.825 × 0.1% × 1.01 ≈ $0.1058.
+  const priced = (amount: string, usd: string | null) => ({ ...fee(amount), usd })
+
+  test.each([
+    ['0.10', true],
+    ['0.11', false],
+  ])('a $%s affiliate fee at 10 bps of $99.82 proceeds: %s', async (usd, proceeds) => {
+    const quote = withAffiliates({ affiliates: [{ address: '0xBob', fee: priced('100', usd) }] })
+    quote.offramp!.feeBreakdown.affiliateFee = priced('100', usd)
+    const { sw } = setup({ quote, config: { affiliates: [{ address: '0xbob', bps: 10 }] } })
+
+    if (proceeds) {
+      await sw.swidge(OFFRAMP)
+      expect(createOrder).toHaveBeenCalledWith({ offramp: quote.offramp })
+      return
+    }
+    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
+      gatewayError(
+        ERR.VALIDATION,
+        `quote charges an affiliate fee of 100 ($${usd} on $99.82), above the requested 10 bps`
+      )
+    )
+    expect(createOrder).not.toHaveBeenCalled()
+  })
+
+  test('each affiliate is held to its own bps, not just the total', async () => {
+    // 20 bps in all, so the $0.16 total passes — but Bob asked for 10 and is charged 11.
+    const quote = withAffiliates({
+      affiliates: [
+        { address: '0xBob', fee: priced('110', '0.11') },
+        { address: '0xAlice', fee: priced('50', '0.05') },
+      ],
+    })
+    quote.offramp!.feeBreakdown.affiliateFee = priced('160', '0.16')
+    const { sw } = setup({
+      quote,
+      config: {
+        affiliates: [
+          { address: '0xbob', bps: 10 },
+          { address: '0xalice', bps: 10 },
+        ],
+      },
+    })
+
+    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
+      gatewayError(
+        ERR.VALIDATION,
+        'quote charges an affiliate fee of 110 ($0.11 on $99.82), above the requested 10 bps'
+      )
+    )
+    expect(createOrder).not.toHaveBeenCalled()
+  })
+
+  test('an affiliate fee without a USD price is refused', async () => {
+    const quote = withAffiliates({ affiliates: [{ address: '0xBob', fee: priced('500', null) }] })
+    quote.offramp!.feeBreakdown.affiliateFee = priced('500', null)
+    const { sw } = setup({ quote, config: { affiliates: [{ address: '0xbob', bps: 10 }] } })
+
+    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
+      gatewayError(
+        ERR.VALIDATION,
+        'cannot verify the affiliate fee of 500: the quote has no USD price for it or for the ' +
+          'input amount'
+      )
     )
     expect(createOrder).not.toHaveBeenCalled()
   })

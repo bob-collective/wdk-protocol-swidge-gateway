@@ -48,6 +48,7 @@ function quoteOn(chain: string, token = USDT_BASE) {
   quote.offramp.srcChain = chain
   quote.offramp.inputAmount.chain = chain
   quote.offramp.inputAmount.address = token
+  quote.offramp.tokenAddress = token
   return quote
 }
 

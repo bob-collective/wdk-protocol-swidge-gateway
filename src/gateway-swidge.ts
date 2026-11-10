@@ -30,7 +30,7 @@ import { isBtcAlias, toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
 import { quoteSlippageBps, toSwidgeQuote } from './map/quote.js'
 import type { GatewayQuoteV4, GatewaySwidgeQuote, WireTokenAmount } from './map/quote.js'
-import { assertFeeCaps } from './fee-caps.js'
+import { assertFeeCaps, exceedsBps } from './fee-caps.js'
 import { toSwidgeStatus } from './map/status.js'
 import { toSupportedChains, toSupportedTokens } from './map/routes.js'
 import { orderPayload } from './map/order.js'
@@ -41,6 +41,9 @@ import { assertAllowanceHolderSpender } from './allowance-holder.js'
 import { assertOrderPayload, uint } from './order-guard.js'
 
 const BOB_BEARER_TOKEN = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
+
+/** The gateway's id for a chain's native token. */
+const NATIVE_TOKEN = '0x0000000000000000000000000000000000000000'
 
 function assertPayloadFamily(payload: OrderPayload, srcFamily: string): void {
   const family = payload.kind === 'btc' ? 'bitcoin' : payload.kind
@@ -78,8 +81,12 @@ function assertQuoteVariant(quote: GatewayQuoteV4, variant: Variant): void {
  * address, token pair, chain pair, slippage or affiliate would execute that instead, while
  * `minAmountOut` and the fee caps (which only compare the quote against itself) still pass.
  *
- * - The amount must be echoed. The addresses are compared when echoed (the onramp quote has no
- *   `refundAddress`), case-insensitively since the gateway checksums EVM addresses.
+ * - The amount, the recipient and both token addresses (`inputAmount.address`,
+ *   `outputAmount.address`) must be echoed, and `refundAddress` on every variant but the onramp,
+ *   whose quote has none — its refund target only travels inside the gateway-signed
+ *   `signedQuoteData`, which this module cannot read. The `sender` and the variant-specific token
+ *   echoes (the offramp's `tokenAddress`, the onramp's `dstToken`) must match when echoed.
+ *   Addresses compare case-insensitively, since the gateway checksums EVM addresses.
  * - Token addresses repeat across chains (USDT0, cbBTC, the zero address), so a token is only
  *   pinned together with its chain: `inputAmount.chain`/`outputAmount.chain` must be echoed (every
  *   variant carries them). The top-level `srcChain` must be echoed and match on every variant but
@@ -89,8 +96,9 @@ function assertQuoteVariant(quote: GatewayQuoteV4, variant: Variant): void {
  *   order executes with.
  * - Only the affiliates sent with the request may be paid. The onramp/offramp quote echoes them as
  *   `affiliates[]` (and the first as `affiliateAddress`), the token-swap quote as `affiliate`; none
- *   may name an address that wasn't requested, and with none requested the fee breakdown may carry
- *   no affiliate fee.
+ *   may name an address that wasn't requested. The fee breakdown's `affiliateFee`, and each
+ *   `affiliates[]` entry's `fee`, may be at most the requested bps of the input, compared by USD
+ *   value (`exceedsBps`) and refused when unpriced; with none requested, no affiliate fee at all.
  */
 function assertQuoteMatchesRequest(
   quote: GatewayQuoteV4,
@@ -116,14 +124,17 @@ function assertQuoteMatchesRequest(
   if (amount === undefined || amount !== BigInt(params.amount as string)) {
     fail('input amount', input?.amount, params.amount)
   }
-  const echoes: [field: string, got: unknown, want: string | undefined][] = [
-    ['recipient', inner.recipient, params.recipient],
-    ['refundAddress', inner.refundAddress, params.refundAddress],
-    ['source token', input?.address, params.srcToken],
-    ['destination token', output?.address, params.dstToken],
+  const echoes: [field: string, got: unknown, want: string | undefined, required: boolean][] = [
+    ['recipient', inner.recipient, params.recipient, true],
+    ['sender', inner.sender, params.sender, false],
+    ['refundAddress', inner.refundAddress, params.refundAddress, variant !== 'onramp'],
+    ['source token', input?.address, params.srcToken, true],
+    ['source token', inner.tokenAddress, params.srcToken, false],
+    ['destination token', output?.address, params.dstToken, true],
+    ['destination token', inner.dstToken, params.dstToken, false],
   ]
-  for (const [field, got, want] of echoes) {
-    if (got == null || want == null) continue
+  for (const [field, got, want, required] of echoes) {
+    if (want == null || (got == null && !required)) continue
     if (typeof got !== 'string' || got.toLowerCase() !== want.toLowerCase()) fail(field, got, want)
   }
 
@@ -150,19 +161,27 @@ function assertQuoteMatchesRequest(
     }
   }
 
-  const requested = new Set(
+  // Address → bps, as `serializeAffiliates` sent them.
+  const requested = new Map(
     (params.affiliates ?? '')
       .split(',')
       .filter(Boolean)
-      .map((a) => a.split(':')[0].toLowerCase())
+      .map((a) => {
+        const [address, bps] = a.split(':')
+        return [address.toLowerCase(), Number(bps)] as const
+      })
   )
   const list = inner.affiliates
-  const affiliates = [
+  const paid: [address: unknown, fee: unknown][] = [
     ...(list == null ? [] : Array.isArray(list) ? list : [list]),
     ...(inner.affiliate == null ? [] : [inner.affiliate]),
-  ].map((a) => (a !== null && typeof a === 'object' ? (a as { address?: unknown }).address : a))
-  if (inner.affiliateAddress != null) affiliates.push(inner.affiliateAddress)
-  for (const address of affiliates) {
+  ].map((a) =>
+    a !== null && typeof a === 'object'
+      ? [(a as { address?: unknown }).address, (a as { fee?: unknown }).fee]
+      : [a, undefined]
+  )
+  if (inner.affiliateAddress != null) paid.push([inner.affiliateAddress, undefined])
+  for (const [address] of paid) {
     if (typeof address !== 'string' || !requested.has(address.toLowerCase())) {
       throw new GatewaySwidgeError(
         ERR.VALIDATION,
@@ -171,13 +190,37 @@ function assertQuoteMatchesRequest(
       )
     }
   }
-  if (requested.size === 0) {
-    const breakdown = inner.feeBreakdown as Record<string, unknown> | undefined
-    const fee = (breakdown?.affiliateFee as WireTokenAmount | undefined)?.amount
-    if (fee != null && !/^0+$/.test(String(fee))) {
+  // The breakdown's total and each affiliate's own fee may be at most the bps requested for it.
+  // They are in another token than the input, so they are compared by their USD values.
+  const breakdown = inner.feeBreakdown as Record<string, unknown> | undefined
+  let totalBps = 0
+  for (const bps of requested.values()) totalBps += bps
+  const charged: [fee: unknown, bps: number][] = [
+    [breakdown?.affiliateFee, totalBps],
+    ...paid.map(([address, fee]): [unknown, number] => [
+      fee,
+      requested.get((address as string).toLowerCase())!,
+    ]),
+  ]
+  for (const [entry, bps] of charged) {
+    const fee = entry as WireTokenAmount | undefined
+    if (fee?.amount == null || /^0+$/.test(String(fee.amount))) continue
+    if (requested.size === 0) {
       throw new GatewaySwidgeError(
         ERR.VALIDATION,
-        `quote charges an affiliate fee of ${fee}, but the request included no affiliates`,
+        `quote charges an affiliate fee of ${fee.amount}, but the request included no affiliates`,
+        { cause: quote }
+      )
+    }
+    const over = exceedsBps(fee.usd, input?.usd, bps)
+    if (over !== false) {
+      throw new GatewaySwidgeError(
+        ERR.VALIDATION,
+        over === null
+          ? `cannot verify the affiliate fee of ${fee.amount}: the quote has no USD price for it ` +
+              'or for the input amount'
+          : `quote charges an affiliate fee of ${fee.amount} ($${fee.usd} on $${input?.usd}), ` +
+              `above the requested ${bps} bps`,
         { cause: quote }
       )
     }
@@ -251,8 +294,10 @@ export interface GatewaySwidgeConfig extends SwidgeProtocolConfig {
   tronConfirmTimeoutMs?: number
   /**
    * Cap on native `value` the order tx may send on top of the swapped amount — the LayerZero /
-   * CCIP messaging fee on ERC-20 token swaps — in the source chain's native base units (wei, sun),
-   * used when a call sets none (default: a per-chain cap of roughly $10–20 of the gas token).
+   * CCIP messaging fee on ERC-20 token swaps — in `fromChain`'s native base units (wei, sun), so
+   * it requires `fromChain` and applies only to calls from that chain; a call from another chain
+   * uses its own `maxNativeFee` or that chain's default (default: a per-chain cap of roughly
+   * $10–20 of the gas token).
    */
   maxNativeFee?: bigint | number | string
 }
@@ -287,8 +332,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @param config - The protocol configuration.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
    *   configuration sets neither `http` nor `client`.
-   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer: a bigint, a safe
-   *   integer or a decimal string.
+   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer (a bigint, a safe
+   *   integer or a decimal string), or is set without `config.fromChain`.
    */
   constructor(account?: undefined, config?: GatewaySwidgeConfig)
   /**
@@ -299,8 +344,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @param config - The protocol configuration.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
    *   configuration sets neither `http` nor `client`.
-   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer: a bigint, a safe
-   *   integer or a decimal string.
+   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer (a bigint, a safe
+   *   integer or a decimal string), or is set without `config.fromChain`.
    */
   constructor(account: IWalletAccountReadOnly, config?: GatewaySwidgeConfig)
   /**
@@ -311,8 +356,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @param config - The protocol configuration.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
    *   configuration sets neither `http` nor `client`.
-   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer: a bigint, a safe
-   *   integer or a decimal string.
+   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer (a bigint, a safe
+   *   integer or a decimal string), or is set without `config.fromChain`.
    */
   constructor(account: IWalletAccount, config?: GatewaySwidgeConfig)
   constructor(account?: IWalletAccountReadOnly | IWalletAccount, config: GatewaySwidgeConfig = {}) {
@@ -337,6 +382,12 @@ export class GatewaySwidge extends SwidgeProtocol {
     }
     this._maxNativeFee =
       config.maxNativeFee == null ? undefined : baseUnits('maxNativeFee', config.maxNativeFee)
+    if (this._maxNativeFee !== undefined && !config.fromChain) {
+      throw new ValueError(
+        'config.maxNativeFee is in the native units of config.fromChain: set fromChain, or pass ' +
+          'maxNativeFee per call'
+      )
+    }
     this._spenderCache = new Map()
   }
 
@@ -533,8 +584,9 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
-   *   variant, input amount, recipient, refund address, token pair or chain pair; a slippage looser
-   *   than requested; or an affiliate fee the request did not include.
+   *   variant, input amount, recipient, sender, refund address, token pair or chain pair; a
+   *   slippage looser than requested; an affiliate the request did not include; or an affiliate
+   *   fee above the requested bps, or one that cannot be priced in USD.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
    *   transaction.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the source chain is one this module cannot sign
@@ -569,8 +621,9 @@ export class GatewaySwidge extends SwidgeProtocol {
     options: SwidgeOptions,
     config: SwidgeProtocolConfig & NativeFeeConfig & { paymasterToken?: string } = {}
   ): Promise<SwidgeResult> {
-    this._assertCanSign(this._resolveChains(options).srcFamily)
-    const maxNativeFee = this._resolveMaxNativeFee(config)
+    const route = this._resolveChains(options)
+    this._assertCanSign(route.srcFamily)
+    const maxNativeFee = this._resolveMaxNativeFee(config, route.fromChain)
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     const { swidgeQuote: sq, payload } = await this._createOrder(params, variant, srcFamily, {
       minAmountOut: this._minAmountOut(options),
@@ -682,25 +735,44 @@ export class GatewaySwidge extends SwidgeProtocol {
     >
     const payload = orderPayload(order, variant, quote)
     assertPayloadFamily(payload, srcFamily)
-    assertOrderPayload(payload, {
+    const nativeFee = assertOrderPayload(payload, {
       chain: params.srcChain as string,
       token: params.srcToken as string,
       // Decimal: _buildQuoteParams parsed and re-serialized it.
       amount: BigInt(params.amount as string),
       maxNativeFee: checks.maxNativeFee,
     })
+    // The quote doesn't price a LayerZero/CCIP messaging fee paid in native `value`, so the fee
+    // caps can't see it (maxNativeFee bounds it); it is still a cost, so it is reported.
+    if (nativeFee > 0n) {
+      swidgeQuote.fees.push({
+        type: 'network',
+        amount: nativeFee,
+        token: NATIVE_TOKEN,
+        chain: params.srcChain,
+        included: false,
+        description: 'Bridge messaging fee, paid in the native token on top of the swap',
+      })
+    }
     return { swidgeQuote, payload }
   }
 
   /**
-   * The native-fee cap for one call: `config.maxNativeFee` if given, else the instance's, else
-   * undefined (→ the chain default). `swidge()`, `simulateSwidge()` and `getRequiredApproval()`
-   * all resolve it here, so an order one of them accepts the others accept too.
+   * The native-fee cap for one call from `fromChain`: `config.maxNativeFee` if given; else the
+   * instance's, which is in `config.fromChain`'s native units and so only applies on that chain;
+   * else undefined (→ the chain default). `swidge()`, `simulateSwidge()` and
+   * `getRequiredApproval()` all resolve it here, so an order one of them accepts the others accept
+   * too.
    */
-  private _resolveMaxNativeFee(config: NativeFeeConfig | null): bigint | undefined {
+  private _resolveMaxNativeFee(
+    config: NativeFeeConfig | null,
+    fromChain: string
+  ): bigint | undefined {
     // `null` from JS callers, as `_aaConfig` tolerates it.
     const perCall = config?.maxNativeFee
-    return perCall == null ? this._maxNativeFee : baseUnits('maxNativeFee', perCall)
+    if (perCall != null) return baseUnits('maxNativeFee', perCall)
+    // 0.005 ETH sized for one chain would be 0.005 POL on another — or the reverse, 50 POL as ETH.
+    return this._fromChain && sameChain(fromChain, this._fromChain) ? this._maxNativeFee : undefined
   }
 
   private _aaConfig(config: { paymasterToken?: string }): unknown {
@@ -775,8 +847,9 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
-   *   variant, input amount, recipient, refund address, token pair or chain pair; a slippage looser
-   *   than requested; or an affiliate fee the request did not include.
+   *   variant, input amount, recipient, sender, refund address, token pair or chain pair; a
+   *   slippage looser than requested; an affiliate the request did not include; or an affiliate
+   *   fee above the requested bps, or one that cannot be priced in USD.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
    *   transaction.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the source chain is one this module cannot sign
@@ -801,7 +874,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     options: SwidgeOptions & { fromChain?: string },
     config: SwidgeProtocolConfig & NativeFeeConfig = {}
   ): Promise<SwidgeSimulation> {
-    const maxNativeFee = this._resolveMaxNativeFee(config)
+    const maxNativeFee = this._resolveMaxNativeFee(config, this._resolveChains(options).fromChain)
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     const { swidgeQuote: sq, payload } = await this._createOrder(params, variant, srcFamily, {
       minAmountOut: this._minAmountOut(options),
@@ -934,8 +1007,9 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
-   *   variant, input amount, recipient, refund address, token pair or chain pair; a slippage looser
-   *   than requested; or an affiliate fee the request did not include.
+   *   variant, input amount, recipient, sender, refund address, token pair or chain pair; a
+   *   slippage looser than requested; an affiliate the request did not include; or an affiliate
+   *   fee above the requested bps, or one that cannot be priced in USD.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
    *   transaction.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the source chain is one this module cannot sign
@@ -964,7 +1038,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     },
     config: NativeFeeConfig = {}
   ): Promise<EvmRequiredApproval | null> {
-    const maxNativeFee = this._resolveMaxNativeFee(config)
+    const maxNativeFee = this._resolveMaxNativeFee(config, this._resolveChains(options).fromChain)
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     if (variant === 'onramp') return null
     const key = `${fromChain}:${variant}:${options.fromToken}:${options.toToken}:${(options.toChain as string) || ''}`

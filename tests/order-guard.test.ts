@@ -26,9 +26,11 @@ function setup(tx: OrderTx, config: GatewaySwidgeConfig = {}, fromChain = 'base'
     // Echoes the request, so the quote binding passes and the order tx is what's under test.
     getQuote: vi.fn(async (params: Record<string, string>) => ({
       offramp: {
-        inputAmount: { amount: params.amount, chain: fromChain },
-        outputAmount: { amount: '1300', chain: 'bitcoin' },
-        srcChain: fromChain,
+        inputAmount: { amount: params.amount, address: params.srcToken, chain: params.srcChain },
+        outputAmount: { amount: '1300', address: params.dstToken, chain: 'bitcoin' },
+        srcChain: params.srcChain,
+        recipient: params.recipient,
+        refundAddress: params.refundAddress,
       },
     })),
     createOrder: vi.fn(async () => ({ offramp: { order_id: 'o', tx } })),
@@ -164,12 +166,12 @@ describe('order provenance and encoding', () => {
 
   test('a quote without srcChain is refused before create-order', async () => {
     const { sw, client } = setup(order())
-    client.getQuote.mockResolvedValueOnce({
-      offramp: {
-        inputAmount: { amount: String(AMOUNT), chain: 'base' },
-        outputAmount: { amount: '1300', chain: 'bitcoin' },
-      },
-    } as never)
+    const echo = client.getQuote.getMockImplementation()!
+    client.getQuote.mockImplementationOnce(async (params) => {
+      const quote = await echo(params)
+      delete (quote.offramp as { srcChain?: string }).srcChain
+      return quote
+    })
     await expect(sw.swidge(route())).rejects.toThrow(
       'quote source chain undefined does not match the requested base'
     )
@@ -211,7 +213,20 @@ describe('order provenance and encoding', () => {
 describe('native value', () => {
   test('an ERC-20 order may carry a messaging fee up to the chain default', async () => {
     const { sw } = setup(order({ value: String(BASE_DEFAULT_CAP) }))
-    await expect(sw.swidge(route())).resolves.toMatchObject({ hash: '0xtxhash' })
+    await expect(sw.swidge(route())).resolves.toMatchObject({
+      hash: '0xtxhash',
+      // Paid on top of the swap, so reported though the quote doesn't price it.
+      fees: [
+        {
+          type: 'network',
+          amount: BASE_DEFAULT_CAP,
+          token: ZERO,
+          chain: 'base',
+          included: false,
+          description: 'Bridge messaging fee, paid in the native token on top of the swap',
+        },
+      ],
+    })
     await refused(
       order({ value: String(BASE_DEFAULT_CAP + 1n) }),
       `order tx sends ${BASE_DEFAULT_CAP + 1n} native base units on top of the swap, above ` +
@@ -275,13 +290,46 @@ describe('native value', () => {
   test('a native source pays its amount as value; only the excess is capped', async () => {
     const native = (value: bigint) => order({ token: ZERO, value: String(value) })
     const ok = setup(native(AMOUNT + BASE_DEFAULT_CAP))
-    await expect(ok.sw.swidge(route(ZERO))).resolves.toMatchObject({ hash: '0xtxhash' })
+    await expect(ok.sw.swidge(route(ZERO))).resolves.toMatchObject({
+      hash: '0xtxhash',
+      fees: [expect.objectContaining({ amount: BASE_DEFAULT_CAP, included: false })],
+    })
+    const exact = setup(native(AMOUNT))
+    await expect(exact.sw.swidge(route(ZERO))).resolves.toMatchObject({ fees: [] })
 
     const over = setup(native(AMOUNT + BASE_DEFAULT_CAP + 1n))
     await expect(over.sw.swidge(route(ZERO))).rejects.toThrow(
       `order tx sends ${BASE_DEFAULT_CAP + 1n} native base units on top of the swap`
     )
     expect(over.account.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  // The cap is in one chain's native units: 1000 wei sized for Base must not become the cap — or
+  // the floor — of a call from another chain.
+  test('config.maxNativeFee applies only to calls from config.fromChain', async () => {
+    const onEthereum = { ...route(), fromChain: 'ethereum' }
+    const { sw } = setup(order({ value: '1001', chain: 'ethereum' }), { maxNativeFee: 1000 })
+    await expect(sw.swidge(onEthereum)).resolves.toMatchObject({ hash: '0xtxhash' })
+    await expect(sw.swidge(onEthereum, { maxNativeFee: 1000 })).rejects.toThrow(
+      /above maxNativeFee 1000/
+    )
+    const overDefault = String(BASE_DEFAULT_CAP + 1n) // 0.005 ETH is Ethereum's default too
+    const over = setup(order({ value: overDefault, chain: 'ethereum' }), {
+      maxNativeFee: 10n ** 18n,
+    })
+    await expect(over.sw.swidge(onEthereum)).rejects.toThrow(
+      `above maxNativeFee ${BASE_DEFAULT_CAP}`
+    )
+  })
+
+  test('config.maxNativeFee without config.fromChain is refused at construction', () => {
+    const client = {} as GatewayClient
+    expect(() => new GatewaySwidge(undefined, { client, maxNativeFee: 1000 })).toThrow(
+      new ValueError(
+        'config.maxNativeFee is in the native units of config.fromChain: set fromChain, or pass ' +
+          'maxNativeFee per call'
+      )
+    )
   })
 
   test('an invalid maxNativeFee is refused at construction', () => {
@@ -353,10 +401,11 @@ describe('Tron order tx', () => {
 describe('onramp', () => {
   function onramp(quoteAmount: string) {
     const client = {
-      getQuote: vi.fn(async () => ({
+      getQuote: vi.fn(async (params: Record<string, string>) => ({
         onramp: {
-          inputAmount: { amount: quoteAmount, chain: 'bitcoin' },
-          outputAmount: { amount: '1300', chain: 'base' },
+          inputAmount: { amount: quoteAmount, address: params.srcToken, chain: 'bitcoin' },
+          outputAmount: { amount: '1300', address: params.dstToken, chain: 'base' },
+          recipient: params.recipient,
         },
       })),
       createOrder: vi.fn(async () => ({ onramp: { order_id: 'o', address: 'bc1qdeposit' } })),
