@@ -184,7 +184,7 @@ Contract violations throw the WDK error classes from `@tetherto/wdk-wallet/proto
 
 | Error                     | When                                                                                         |
 | ------------------------- | -------------------------------------------------------------------------------------------- |
-| `ValueError`              | `toTokenAmount` (exact-out) passed, `fromTokenAmount` or a cross-chain `recipient` missing, or a non-integer `minAmountOut`. |
+| `ValueError`              | `toTokenAmount` (exact-out) passed, `fromTokenAmount` or a cross-chain `recipient` missing, or a `fromTokenAmount`, `minAmountOut` or `maxNativeFee` that is not a non-negative integer (a bigint, a safe integer or a decimal string). |
 | `AccountRequiredError`    | `swidge()` with an account that cannot sign on the source chain.                             |
 | `SwidgeError`             | Quote below `minAmountOut` (`reason: 'COULD_NOT_MET_THRESHOLD'`). `swap()`/`bridge()` re-throw it as `SwapError`/`BridgeError`. |
 | `MaximumFeeExceededError` | A fee over `maxNetworkFeeBps`/`maxProtocolFeeBps`, or a capped fee that cannot be priced.    |

@@ -1,12 +1,10 @@
-// The create-order tx is held against the request before anything signs (src/order-guard.ts).
+// The create-order tx is held against the request before anything signs (src/order-guard.ts),
+// exercised through swidge(), simulateSwidge() and getRequiredApproval().
 import { describe, test, expect, vi } from 'vitest'
 import { Interface, id } from 'ethers'
 import { Transaction } from 'bitcoinjs-lib'
-import { GatewaySwidge } from '../src/gateway-swidge.js'
-import type { GatewaySwidgeConfig } from '../src/gateway-swidge.js'
-import type { GatewayClient } from '../src/gateway-client.js'
-import { EXEC_SELECTOR, assertOrderPayload } from '../src/order-guard.js'
-import { orderPayload } from '../src/map/order.js'
+import { GatewaySwidge, ValueError } from '../src/index.js'
+import type { GatewayClient, GatewaySwidgeConfig } from '../src/index.js'
 import { CANONICAL_HOLDER, EVM_TOKEN, ROUTER, execData } from './fixtures/exec.js'
 import { REGISTRY as TRON_HOLDER, USDT as USDT_TRON } from './fixtures/tron.js'
 
@@ -77,12 +75,14 @@ async function refused(
   expect(account.sendTransaction).not.toHaveBeenCalled()
 }
 
-describe('exec calldata', () => {
+// The fixture every order below is built with: if it drifted from the ABI, the guard tests would
+// prove nothing about real gateway orders.
+describe('exec calldata fixture', () => {
   test('selector and encoding match the ABI', () => {
     const iface = new Interface([
       'function exec(address operator, address token, uint256 amount, address target, bytes data)',
     ])
-    expect(id('exec(address,address,uint256,address,bytes)').slice(2, 10)).toBe(EXEC_SELECTOR)
+    expect(id('exec(address,address,uint256,address,bytes)').slice(2, 10)).toBe('2213bc0b')
     expect(execData({ token: EVM_TOKEN, amount: AMOUNT, inner: '0x0102' })).toBe(
       iface.encodeFunctionData('exec', [ROUTER, EVM_TOKEN, AMOUNT, ROUTER, '0x0102'])
     )
@@ -153,6 +153,13 @@ describe('order provenance and encoding', () => {
       'order tx is for chain arbitrum, but the route is from base'
     )
     await refused(order({ chain: undefined }), 'order tx is for chain undefined')
+  })
+
+  test('an order for the other spelling of the same chain is accepted', async () => {
+    // `hyperevm` and `hyperliquid` both name chain 999.
+    const { sw, account } = setup(order({ chain: 'hyperevm' }), {}, 'hyperliquid')
+    await expect(sw.swidge(route())).resolves.toMatchObject({ hash: '0xtxhash' })
+    expect(account.sendTransaction).toHaveBeenCalledTimes(1)
   })
 
   test('a quote without srcChain is refused before create-order', async () => {
@@ -246,6 +253,7 @@ describe('native value', () => {
       () => sw.simulateSwidge(route(), { maxNativeFee: '0x10' }),
       () => sw.getRequiredApproval(route(), { maxNativeFee: 1.5 }),
     ]) {
+      await expect(call()).rejects.toThrow(ValueError)
       await expect(call()).rejects.toThrow(/maxNativeFee must be a non-negative integer/)
     }
     expect(client.getQuote).not.toHaveBeenCalled()
@@ -278,7 +286,7 @@ describe('native value', () => {
 
   test('an invalid maxNativeFee is refused at construction', () => {
     expect(() => setup(order(), { maxNativeFee: -1 })).toThrow(
-      'maxNativeFee must be a non-negative integer in base units, got -1'
+      new ValueError('maxNativeFee must be a non-negative integer amount in base units, got -1')
     )
     expect(() => setup(order(), { maxNativeFee: 1.5 })).toThrow(/maxNativeFee must be/)
     expect(() => setup(order(), { maxNativeFee: '0x10' })).toThrow(/maxNativeFee must be/)
@@ -287,7 +295,7 @@ describe('native value', () => {
   test('a maxNativeFee number above MAX_SAFE_INTEGER points at bigint/string', () => {
     // 0.02 BNB — the bsc default — as a number.
     expect(() => setup(order(), { maxNativeFee: 2e16 })).toThrow(
-      'maxNativeFee must be a non-negative integer in base units, got 20000000000000000 ' +
+      'maxNativeFee must be a non-negative integer amount in base units, got 20000000000000000 ' +
         '(above Number.MAX_SAFE_INTEGER: pass a bigint or a decimal string)'
     )
     expect(() => setup(order(), { maxNativeFee: 2n * 10n ** 16n })).not.toThrow()
@@ -309,20 +317,22 @@ describe('Tron order tx', () => {
     }
   }
 
-  test('the Tron AllowanceHolder and a Base58 source token are compared as addresses', async () => {
-    // Base58 holder vs the table's 0x form, Base58 token vs exec's hex word: both match.
-    const ctx = { chain: 'tron', token: USDT_TRON, amount: AMOUNT }
-    const payload = (tx: ReturnType<typeof tron>) =>
-      orderPayload({ offramp: { order_id: 'o', tx } }, 'offramp')
-    expect(() => assertOrderPayload(payload(tron()), ctx)).not.toThrow()
-    expect(() => assertOrderPayload(payload(tron()), { ...ctx, token: EVM_TOKEN })).toThrow(
-      /order moves token .*, but the swidge is from/
-    )
-
+  // Base58 holder vs the table's 0x form, Base58 token vs exec's hex word: compared as addresses.
+  // The matching case is the Tron swidge happy path in tron.test.ts (Base58 holder and USDT).
+  test('another Tron holder is refused', async () => {
     const { sw, account } = setup(tron({ to: 'TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax' }), {}, 'tron')
     await expect(sw.swidge(route(USDT_TRON))).rejects.toThrow(
       'order tx targets TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax, expected the AllowanceHolder at ' +
         '0x07a39ae4c49dee86e892450b20881f32cd5d500d'
+    )
+    expect(account.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  test('another token than the Base58 source token is refused', async () => {
+    const { sw, account } = setup(tron({ token: EVM_TOKEN }), {}, 'tron')
+    await expect(sw.swidge(route(USDT_TRON))).rejects.toThrow(
+      `order moves token ${EVM_TOKEN.toLowerCase()}, but the swidge is from ` +
+        '0xa614f803b6fd780986a42c78ec9c7f77e6ded13c'
     )
     expect(account.sendTransaction).not.toHaveBeenCalled()
   })

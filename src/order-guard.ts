@@ -1,5 +1,6 @@
 import { GatewaySwidgeError, ERR } from './errors.js'
 import { allowanceHolderFor, toHexAddress } from './allowance-holder.js'
+import { sameChain } from './chains.js'
 import type { OrderPayload } from './map/order.js'
 
 /** `exec(address operator, address token, uint256 amount, address target, bytes data)`. */
@@ -149,7 +150,7 @@ function assertContractCall(
 ): void {
   const { tx } = payload
   // The wallet signs on its own chain; an order built for another one could not be indexed.
-  if (payload.chain == null || payload.chain.toLowerCase() !== ctx.chain.toLowerCase()) {
+  if (payload.chain == null || !sameChain(payload.chain, ctx.chain)) {
     refuse(`order tx is for chain ${payload.chain}, but the route is from ${ctx.chain}`, tx)
   }
   const holder = allowanceHolderFor(ctx.chain)

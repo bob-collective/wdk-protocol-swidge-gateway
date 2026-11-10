@@ -25,7 +25,7 @@ import { tronAdapter } from './chain-adapters/tron.js'
 import type { TronAccount, TronOpts } from './chain-adapters/tron.js'
 import type { EvmAccount, EvmRequiredApproval } from './chain-adapters/evm.js'
 import type { BtcAccount } from './chain-adapters/bitcoin.js'
-import { CHAINS, chainFamily, detectVariant } from './chains.js'
+import { chainFamily, detectVariant, sameChain } from './chains.js'
 import { isBtcAlias, toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
 import { quoteSlippageBps, toSwidgeQuote } from './map/quote.js'
@@ -38,7 +38,7 @@ import type { OrderPayload } from './map/order.js'
 import type { RegisterTxV4, SwidgeSimulation } from './types.js'
 import { GatewaySwidgeError, ERR } from './errors.js'
 import { assertAllowanceHolderSpender } from './allowance-holder.js'
-import { assertOrderPayload, parseBaseUnits, uint } from './order-guard.js'
+import { assertOrderPayload, uint } from './order-guard.js'
 
 const BOB_BEARER_TOKEN = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
 
@@ -70,16 +70,6 @@ function assertQuoteVariant(quote: GatewayQuoteV4, variant: Variant): void {
       { cause: quote }
     )
   }
-}
-
-/**
- * Gateway chain ids compare case-insensitively (the gateway echoes `Base` back as `base`), and
- * two spellings of one chain in `CHAINS` (`hyperevm`/`hyperliquid`) are the same chain.
- */
-function sameChain(a: string, b: string): boolean {
-  const x = a.toLowerCase()
-  const y = b.toLowerCase()
-  return x === y || (Object.hasOwn(CHAINS, x) && CHAINS[x] === CHAINS[y])
 }
 
 /**
@@ -214,7 +204,12 @@ interface OrderChecks {
 function baseUnits(name: string, value: number | bigint | string): bigint {
   const n = uint(value)
   if (n !== null) return n
-  throw new ValueError(`${name} must be a non-negative integer amount in base units, got ${value}`)
+  // e.g. 0.02 BNB = 2e16 wei: an integer, but not exactly representable in general.
+  const unsafe = typeof value === 'number' && Number.isInteger(value) && value > 0
+  throw new ValueError(
+    `${name} must be a non-negative integer amount in base units, got ${value}` +
+      (unsafe ? ' (above Number.MAX_SAFE_INTEGER: pass a bigint or a decimal string)' : '')
+  )
 }
 
 /** Configuration of a `GatewaySwidge` instance. */
@@ -292,8 +287,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @param config - The protocol configuration.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
    *   configuration sets neither `http` nor `client`.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `config.maxNativeFee` is not a non-negative
-   *   integer: a bigint, a safe integer or a decimal string.
+   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer: a bigint, a safe
+   *   integer or a decimal string.
    */
   constructor(account?: undefined, config?: GatewaySwidgeConfig)
   /**
@@ -304,8 +299,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @param config - The protocol configuration.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
    *   configuration sets neither `http` nor `client`.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `config.maxNativeFee` is not a non-negative
-   *   integer: a bigint, a safe integer or a decimal string.
+   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer: a bigint, a safe
+   *   integer or a decimal string.
    */
   constructor(account: IWalletAccountReadOnly, config?: GatewaySwidgeConfig)
   /**
@@ -316,8 +311,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @param config - The protocol configuration.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
    *   configuration sets neither `http` nor `client`.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `config.maxNativeFee` is not a non-negative
-   *   integer: a bigint, a safe integer or a decimal string.
+   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer: a bigint, a safe
+   *   integer or a decimal string.
    */
   constructor(account: IWalletAccount, config?: GatewaySwidgeConfig)
   constructor(account?: IWalletAccountReadOnly | IWalletAccount, config: GatewaySwidgeConfig = {}) {
@@ -341,7 +336,7 @@ export class GatewaySwidge extends SwidgeProtocol {
       confirmTimeoutMs: config.tronConfirmTimeoutMs,
     }
     this._maxNativeFee =
-      config.maxNativeFee == null ? undefined : parseBaseUnits('maxNativeFee', config.maxNativeFee)
+      config.maxNativeFee == null ? undefined : baseUnits('maxNativeFee', config.maxNativeFee)
     this._spenderCache = new Map()
   }
 
@@ -533,8 +528,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {MaximumFeeExceededError} If a fee exceeds `maxNetworkFeeBps` or `maxProtocolFeeBps`.
    * @throws {MaximumFeeExceededError} If a set fee cap cannot be verified: the quote lacks the fee
    *   breakdown or a USD price the cap needs.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `maxNativeFee` (per call or configured) is
-   *   not a non-negative integer: a bigint, a safe integer or a decimal string.
+   * @throws {ValueError} If `maxNativeFee` (per call or configured) is not a non-negative
+   *   integer: a bigint, a safe integer or a decimal string.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
@@ -705,7 +700,7 @@ export class GatewaySwidge extends SwidgeProtocol {
   private _resolveMaxNativeFee(config: NativeFeeConfig | null): bigint | undefined {
     // `null` from JS callers, as `_aaConfig` tolerates it.
     const perCall = config?.maxNativeFee
-    return perCall == null ? this._maxNativeFee : parseBaseUnits('maxNativeFee', perCall)
+    return perCall == null ? this._maxNativeFee : baseUnits('maxNativeFee', perCall)
   }
 
   private _aaConfig(config: { paymasterToken?: string }): unknown {
@@ -775,8 +770,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {MaximumFeeExceededError} If a fee exceeds `maxNetworkFeeBps` or `maxProtocolFeeBps`.
    * @throws {MaximumFeeExceededError} If a set fee cap cannot be verified: the quote lacks the fee
    *   breakdown or a USD price the cap needs.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `maxNativeFee` (per call or configured) is
-   *   not a non-negative integer: a bigint, a safe integer or a decimal string.
+   * @throws {ValueError} If `maxNativeFee` (per call or configured) is not a non-negative
+   *   integer: a bigint, a safe integer or a decimal string.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
@@ -934,8 +929,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
    *   errors are retried first), or the quote carries an input, output or fee amount that is not a
    *   plain decimal integer.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `maxNativeFee` (per call or configured) is
-   *   not a non-negative integer: a bigint, a safe integer or a decimal string.
+   * @throws {ValueError} If `maxNativeFee` (per call or configured) is not a non-negative
+   *   integer: a bigint, a safe integer or a decimal string.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
