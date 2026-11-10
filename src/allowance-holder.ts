@@ -13,7 +13,8 @@ const ALLOWANCE_HOLDER_SELF_DEPLOYED = '0x8fd545b348e84deb145f0179a00c671f0b9519
 /** Gateway self-deployed AllowanceHolder on Tron (`TAfbit1ENsRmtZbPQfYU3srURpfYuWYS7K`). */
 const ALLOWANCE_HOLDER_TRON = '0x07a39ae4c49dee86e892450b20881f32cd5d500d'
 
-// Mirrors bob-sdk `sdk/src/gateway/allowance-holder.ts`. Keep the two in step.
+// Mirrors bob-sdk `sdk/src/gateway/allowance-holder.ts`. Keep the two in step. Every holder here
+// must reject an ERC-20 `exec` target (0x's `ConfusedDeputy()` check): see `assertOrderPayload`.
 const ALLOWANCE_HOLDER_BY_CHAIN: Record<string, string> = {
   bob: ALLOWANCE_HOLDER_SELF_DEPLOYED,
   tron: ALLOWANCE_HOLDER_TRON,
@@ -31,13 +32,30 @@ const ALLOWANCE_HOLDER_BY_CHAIN: Record<string, string> = {
   robinhood: ALLOWANCE_HOLDER_0X_CANONICAL,
 }
 
+/** Lower-case `0x…` AllowanceHolder the Gateway uses on `chain`, or undefined if unknown. */
+export function allowanceHolderFor(chain: string): string | undefined {
+  const key = String(chain).toLowerCase()
+  return Object.hasOwn(ALLOWANCE_HOLDER_BY_CHAIN, key) ? ALLOWANCE_HOLDER_BY_CHAIN[key] : undefined
+}
+
+/** Chains with a known AllowanceHolder, for error messages. */
+export function allowanceHolderChains(): string[] {
+  return Object.keys(ALLOWANCE_HOLDER_BY_CHAIN)
+}
+
 const TRON_VERSION_BYTE = 0x41
 const TRON_BASE58 = /^T[1-9A-HJ-NP-Za-km-z]{33}$/
 const EVM_HEX = /^0x[0-9a-fA-F]{40}$/
 
-/** Lower-case `0x…` form of an EVM or Tron (Base58Check) address, or null if it is neither. */
-function toHexAddress(addr: string): string | null {
+const TRON_HEX = /^41[0-9a-fA-F]{40}$/
+
+/**
+ * Lower-case `0x…` form of an EVM address, or of a Tron address in Base58Check or `41…` hex form;
+ * null if it is none of those.
+ */
+export function toHexAddress(addr: string): string | null {
   if (EVM_HEX.test(addr)) return addr.toLowerCase()
+  if (TRON_HEX.test(addr)) return '0x' + addr.slice(2).toLowerCase()
   if (!TRON_BASE58.test(addr)) return null
   try {
     const { version, hash } = btcAddress.fromBase58Check(addr)
@@ -55,12 +73,12 @@ function toHexAddress(addr: string): string | null {
  * otherwise put the account's whole token balance at risk rather than one order's worth.
  */
 export function assertAllowanceHolderSpender(chain: string, spender: string): void {
-  const expected = ALLOWANCE_HOLDER_BY_CHAIN[String(chain).toLowerCase()]
+  const expected = allowanceHolderFor(chain)
   if (!expected) {
     throw new GatewaySwidgeError(
       ERR.VALIDATION,
       `refusing to approve ${spender}: no known AllowanceHolder for chain "${chain}" ` +
-        `(known: ${Object.keys(ALLOWANCE_HOLDER_BY_CHAIN).join(', ')})`
+        `(known: ${allowanceHolderChains().join(', ')})`
     )
   }
   if (toHexAddress(spender) !== expected) {

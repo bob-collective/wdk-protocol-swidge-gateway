@@ -1,61 +1,154 @@
-import { describe, test, expect, vi } from 'vitest'
-import { GatewayClient } from '../src/gateway-client.js'
-import type { HttpTransport } from '../src/http.js'
+import { beforeEach, describe, test, expect, vi } from 'vitest'
+import { ERR, GatewayClient, GatewaySwidge } from '../src/index.js'
+import { BOB_BEARER_TOKEN, gatewayError } from './helpers.js'
 
-const transport = (impl: HttpTransport['request']): HttpTransport => ({ request: vi.fn(impl) })
+const request = vi.fn()
+const fetchMock = vi.fn()
+
+const API = 'https://dummy-api.url'
+
+beforeEach(() => {
+  vi.resetAllMocks()
+})
 
 describe('GatewayClient', () => {
-  test('getQuote hits /v4/get-quote with bearer + query', async () => {
-    const t = transport(async () => ({ status: 200, body: { onramp: {} } }))
-    const c = new GatewayClient({ apiUrl: 'https://api', bearerToken: 'k'.repeat(32), http: t })
-    await c.getQuote({ srcChain: 'bitcoin', amount: '1000' })
-    expect(t.request).toHaveBeenCalledWith(
-      'GET',
-      'https://api/v4/get-quote',
-      expect.objectContaining({
-        query: expect.objectContaining({ srcChain: 'bitcoin', amount: '1000' }),
-        headers: { authorization: 'Bearer ' + 'k'.repeat(32) },
-      })
-    )
+  test('getQuote sends the query and the bearer token, and returns the body', async () => {
+    request.mockResolvedValue({ status: 200, body: { onramp: {} } })
+    const client = new GatewayClient({
+      apiUrl: API,
+      bearerToken: 'dummy-bearer-token',
+      http: { request },
+    })
+
+    const body = await client.getQuote({ srcChain: 'bitcoin', amount: '1000' })
+
+    expect(request).toHaveBeenCalledWith('GET', `${API}/v4/get-quote`, {
+      query: { srcChain: 'bitcoin', amount: '1000' },
+      body: undefined,
+      headers: { authorization: 'Bearer dummy-bearer-token' },
+    })
+    expect(body).toEqual({ onramp: {} })
   })
 
-  test('non-transient error (400) throws GatewaySwidgeError immediately without retry', async () => {
-    const t = transport(async () => ({ status: 400, body: { message: 'bad request' } }))
-    const c = new GatewayClient({ apiUrl: 'https://api', http: t })
-    await expect(c.getRoutes()).rejects.toMatchObject({ code: 'GATEWAY_HTTP_ERROR', status: 400 })
-    expect(t.request).toHaveBeenCalledTimes(1)
+  test('a non-transient error (400) throws at once, without a retry', async () => {
+    request.mockResolvedValue({ status: 400, body: { message: 'bad request' } })
+    const client = new GatewayClient({ apiUrl: API, http: { request } })
+
+    await expect(client.getRoutes()).rejects.toMatchObject({
+      ...gatewayError(ERR.HTTP, 'bad request'),
+      status: 400,
+    })
+    expect(request.mock.calls).toEqual([
+      ['GET', `${API}/v4/get-routes`, { query: undefined, body: undefined, headers: {} }],
+    ])
   })
 
   test('a V4 error body surfaces its code and message', async () => {
-    const t = transport(async () => ({
+    request.mockResolvedValue({
       status: 400,
       body: { code: 'MISSING_REFUND_ADDRESS', error: 'refundAddress is required' },
-    }))
-    const c = new GatewayClient({ apiUrl: 'https://api', http: t })
-    await expect(c.createOrder({})).rejects.toMatchObject({
+    })
+    const client = new GatewayClient({ apiUrl: API, http: { request } })
+
+    await expect(client.createOrder({ onramp: {} })).rejects.toMatchObject({
+      ...gatewayError(ERR.HTTP, 'MISSING_REFUND_ADDRESS: refundAddress is required'),
       status: 400,
-      message: 'MISSING_REFUND_ADDRESS: refundAddress is required',
+    })
+    expect(request).toHaveBeenCalledWith('POST', `${API}/v4/create-order`, {
+      query: undefined,
+      body: { onramp: {} },
+      headers: {},
     })
   })
 
-  test('transient error (429) is retried up to maxRetries then resolves on success', async () => {
-    let calls = 0
-    const t = transport(async () => {
-      calls++
-      if (calls < 3) return { status: 429, body: { message: 'rate limited' } }
-      return { status: 200, body: { routes: [] } }
-    })
-    const c = new GatewayClient({ apiUrl: 'https://api', http: t, maxRetries: 3 })
-    const result = await c.getRoutes()
-    expect(result).toEqual({ routes: [] })
-    expect(t.request).toHaveBeenCalledTimes(3)
+  test('a transient error (429) is retried until it succeeds', async () => {
+    request
+      .mockResolvedValueOnce({ status: 429, body: { message: 'rate limited' } })
+      .mockResolvedValueOnce({ status: 429, body: { message: 'rate limited' } })
+      .mockResolvedValueOnce({ status: 200, body: { routes: [] } })
+    const client = new GatewayClient({ apiUrl: API, http: { request }, maxRetries: 3 })
+
+    const body = await client.getRoutes()
+
+    expect(body).toEqual({ routes: [] })
+    expect(request).toHaveBeenCalledTimes(3)
   })
 
-  test('transient error exhausts retries and rethrows', async () => {
-    const t = transport(async () => ({ status: 429, body: { message: 'rate limited' } }))
-    const c = new GatewayClient({ apiUrl: 'https://api', http: t, maxRetries: 2 })
-    await expect(c.getRoutes()).rejects.toMatchObject({ code: 'GATEWAY_HTTP_ERROR', status: 429 })
-    // 1 initial + 2 retries = 3 total calls
-    expect(t.request).toHaveBeenCalledTimes(3)
+  test('a transient error that outlasts maxRetries is rethrown', async () => {
+    request.mockResolvedValue({ status: 429, body: { message: 'rate limited' } })
+    const client = new GatewayClient({ apiUrl: API, http: { request }, maxRetries: 2 })
+
+    await expect(client.getRoutes()).rejects.toMatchObject({
+      ...gatewayError(ERR.HTTP, 'rate limited'),
+      status: 429,
+    })
+    // 1 initial + 2 retries
+    expect(request).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('GatewayClient: the default fetch transport', () => {
+  test('builds the query string, dropping unset values, and parses the JSON body', async () => {
+    fetchMock.mockResolvedValue({ status: 200, text: async () => '{"ok":true}' })
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new GatewayClient({ apiUrl: API })
+
+    const body = await client.getQuote({ a: '1', b: undefined })
+
+    expect(fetchMock).toHaveBeenCalledWith(`${API}/v4/get-quote?a=1`, {
+      method: 'GET',
+      headers: { 'content-type': 'application/json' },
+      body: undefined,
+    })
+    expect(body).toEqual({ ok: true })
+  })
+
+  test('sends a JSON body with the bearer token', async () => {
+    fetchMock.mockResolvedValue({ status: 200, text: async () => '{}' })
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new GatewayClient({ apiUrl: API, bearerToken: 'dummy-bearer-token' })
+
+    await client.createOrder({ onramp: { inputAmount: { amount: '50000' } } })
+
+    expect(fetchMock).toHaveBeenCalledWith(`${API}/v4/create-order`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer dummy-bearer-token' },
+      body: '{"onramp":{"inputAmount":{"amount":"50000"}}}',
+    })
+  })
+
+  test('throws a clear error when the runtime has no fetch', () => {
+    vi.stubGlobal('fetch', undefined)
+
+    let thrown: unknown
+    try {
+      new GatewayClient()
+    } catch (err) {
+      thrown = err
+    }
+
+    expect(thrown).toMatchObject(
+      gatewayError(ERR.NOT_SUPPORTED, 'No fetch available; pass config.http for this runtime')
+    )
+  })
+
+  // The Bare runtime has no global fetch: an injected transport must be all GatewaySwidge needs.
+  test('GatewaySwidge works with no global fetch when given config.http', async () => {
+    vi.stubGlobal('fetch', undefined)
+    request.mockResolvedValue({ status: 200, body: [] })
+    const sw = new GatewaySwidge(undefined, { fromChain: 'base', http: { request } })
+
+    const chains = await sw.getSupportedChains()
+
+    expect(request).toHaveBeenCalledWith(
+      'GET',
+      'https://gateway-api-mainnet.gobob.xyz/v4/get-routes',
+      {
+        query: undefined,
+        body: undefined,
+        headers: { authorization: `Bearer ${BOB_BEARER_TOKEN}` },
+      }
+    )
+    expect(chains).toEqual([])
   })
 })

@@ -20,8 +20,9 @@ The Wallet Development Kit (WDK) is a modular framework for building non-custodi
 
 ## ⬇️ Installation
 
-`@tetherto/wdk-wallet` is a **peer** dependency — the module must extend the exact same `SwidgeProtocol`
-base class your WDK core resolves, or `registerProtocol` will silently ignore it.
+`@tetherto/wdk-wallet` is a **peer** dependency (**≥ 1.0.0-beta.17**, the first release exporting the
+WDK protocol error classes) — the module must extend the exact same `SwidgeProtocol` base class your
+WDK core resolves, or `registerProtocol` will silently ignore it.
 
 ```bash
 pnpm add @gobob/wdk-protocol-swidge-gateway @tetherto/wdk-wallet
@@ -157,6 +158,7 @@ const result = await sw.swap({
   tokenIn: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',  // USDC on Base
   tokenOut: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2', // USDT on Base
   tokenInAmount: 1000000n
+  // no `to`: a same-chain swap pays out to the sender. Cross-chain routes need a recipient.
 })
 ```
 
@@ -301,6 +303,9 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 | `config.tronWeb`        | `object?`                                | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. Defaults to the account's own provider. |
 | `config.tronProvider`   | `string?`                                | Tron source routes only. Full-node URL to build a tronweb client from.                                                                     |
 | `config.tronConfirmTimeoutMs` | `number?`                          | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node — finite, `>= 0` (default `20000` ms).       |
+| `config.maxNetworkFeeBps`  | `number \| bigint?`                     | Refuse a `swidge()` whose network fees exceed this many bps of the input (compared in USD; fails closed without a price). Not checked on token swaps, which report no fees. |
+| `config.maxProtocolFeeBps` | `number \| bigint?`                     | Same, for the Gateway protocol fee.                                                                                                        |
+| `config.maxNativeFee`  | `bigint \| number \| string?`          | Cap on native `value` the order tx may send on top of the swapped amount (the LayerZero/CCIP messaging fee on ERC-20 token swaps), in wei/sun. Requires `config.fromChain` and applies only to calls from it (others get their chain's default). Default: per-chain, ~$10–20 of gas token. Also accepted per call — `swidge`, `simulateSwidge` and `getRequiredApproval` all take `(options, { maxNativeFee })`; pass the same value to each. |
 
 Gateway V4 requires a `refundAddress` on every route before it will create an order (`MISSING_REFUND_ADDRESS` otherwise), encoded for the **source** chain: a Bitcoin address on an onramp, the EVM `0x…` or Tron Base58Check sender on an offramp or token swap. The module defaults it to the account's own address — the wallet the funds leave from — so a failed order refunds to where it came from. Set `config.refundAddress` (or `refundAddress` per call) to refund elsewhere on the same source chain. V3's `ownerAddress` no longer exists.
 
@@ -309,10 +314,11 @@ Gateway V4 requires a `refundAddress` on every route before it will create an or
 | Field             | Type      | Required | Description                                                                                                                                                                                            |
 | ----------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `fromToken`       | `string`  | Yes      | Source token: pass `'BTC'` (or the exported `BTC` constant) for Bitcoin — normalised internally to the gateway's native-token zero-address. ERC-20/TRC-20 tokens are passed as their contract address. |
-| `toToken`         | `string`  | Yes      | Destination token: pass `'BTC'` (or `BTC` constant) for Bitcoin, or a contract address for ERC-20/TRC-20 tokens.                                                                                       |
-| `toChain`         | `string`  | Yes      | Destination chain id (e.g. `'base'`, `'bitcoin'`, `'tron'`).                                                                                                                                           |
-| `recipient`       | `string`  | Yes      | Recipient address on the destination chain.                                                                                                                                                            |
-| `fromTokenAmount` | `bigint`  | Yes      | Amount to send (in the token's smallest unit).                                                                                                                                                         |
+| `toToken`         | `string`  | Yes      | Destination token: pass `'BTC'` (or `BTC` constant) for Bitcoin — with `toChain: 'bitcoin'` (`ValueError` otherwise) — or a contract address for ERC-20/TRC-20 tokens.                             |
+| `toChain`         | `string`  | No       | Destination chain id (e.g. `'base'`, `'bitcoin'`, `'tron'`). Defaults to the source chain.                                                                                                             |
+| `recipient`       | `string`  | Cross-chain | Recipient address on the destination chain. Defaults to the sender on a same-chain swap; required (else `ValueError`) on cross-chain routes.                                                        |
+| `fromTokenAmount` | `bigint`  | Yes      | Amount to send (in the token's smallest unit). Exact-out (`toTokenAmount`) is not supported and throws `ValueError`.                                                                                   |
+| `minAmountOut`    | `bigint?` | No       | Destination-amount floor. `swidge()` throws `SwidgeError` (`COULD_NOT_MET_THRESHOLD`) before creating an order when the quote's `toTokenAmountMin` is below it.                                        |
 | `refundAddress`   | `string?` | No       | Source-chain refund address. Overrides `config.refundAddress` and the account-address default.                                                                                                         |
 | `slippage`        | `number?` | No       | Per-call slippage override (overrides `config.slippage`). Unset on both: the gateway resolves it per route.                                                                                            |
 
@@ -320,33 +326,35 @@ Gateway V4 requires a `refundAddress` on every route before it will create an or
 
 #### `quoteSwidge(options) → Promise<SwidgeQuote>`
 
-Returns a quote without executing a transaction. Useful for displaying expected output and fees before commitment.
+Returns a quote without executing a transaction. Useful for displaying expected output and fees before commitment. `toTokenAmountMin` is the output after the quoted slippage; `fees` has one entry per fee, each in its own `token` on its own `chain` (an offramp's solver fee is USDT, its inclusion fee BTC sats — never add them up); `priceImpact` is a number, negative for a loss. See [docs/api-reference.md](./docs/api-reference.md#quoteswidgeoptions-swidgeoptions--promisegatewayswidgequote).
 
-#### `swidge(options) → Promise<SwidgeResult>`
+#### `swidge(options, config?) → Promise<SwidgeResult>`
 
-Executes a swidge. Returns:
+Executes a swidge. `config` takes per-call `maxNetworkFeeBps` / `maxProtocolFeeBps` and `paymasterToken`. Throws `AccountRequiredError` up front for an account that cannot sign; before creating the order, checks `minAmountOut` and the fee caps. Returns:
 
-| Field             | Type     | Description                                     |
-| ----------------- | -------- | ----------------------------------------------- |
-| `id`              | `string` | Gateway order ID — pass to `getSwidgeStatus()`. |
-| `hash`            | `string` | Source-chain transaction hash or TXID.          |
-| `fees`            | `object` | Fee breakdown from the quote.                   |
-| `fromTokenAmount` | `bigint` | Actual input amount.                            |
-| `toTokenAmount`   | `bigint` | Expected output amount.                         |
+| Field              | Type                  | Description                                     |
+| ------------------ | --------------------- | ----------------------------------------------- |
+| `id`               | `string`              | Gateway order ID — pass to `getSwidgeStatus()`. |
+| `hash`             | `string`              | Source-chain transaction hash or TXID.          |
+| `fees`             | `SwidgeFee[]`         | Fee lines from the quote.                       |
+| `transactions`     | `SwidgeTransaction[]` | The source transaction.                         |
+| `fromTokenAmount`  | `bigint`              | Actual input amount.                            |
+| `toTokenAmount`    | `bigint`              | Expected output amount.                         |
+| `toTokenAmountMin` | `bigint`              | Minimum output after slippage.                  |
 
 For offramp and token-swap routes, call `getRequiredApproval()` and `approve()` on the account before calling `swidge()`.
 
-#### `getSwidgeStatus(id) → Promise<{ status: string, transactions: object[] }>`
+#### `getSwidgeStatus(id) → Promise<SwidgeStatusResult>`
 
-Polls order status by the `id` returned from `swidge()`.
+Polls order status by the `id` returned from `swidge()`. `transactions` lists the `source`, `destination` and `refund` hashes the order has so far, each with its `chain`.
 
 #### `getSupportedChains() → Promise<SwidgeSupportedChain[]>`
 
-Returns supported source/destination chains.
+Returns supported source/destination chains with display name, VM type (`utxo`, `evm`, `tvm`) and native token symbol.
 
 #### `getSupportedTokens(options?) → Promise<SwidgeSupportedToken[]>`
 
-Returns supported tokens, optionally filtered by `options`.
+Returns supported tokens with `symbol`, `decimals` and `name`, optionally filtered by `options.fromChain`. Metadata comes from a table generated from the live routes (`pnpm gen:tokens`); a token not in it yet is omitted.
 
 #### `getRequiredApproval(options) → Promise<{ token: string, spender: string, amount: bigint } | null>`
 
@@ -390,6 +398,7 @@ On Tron the allowance is read with a constant-contract call through the resolved
 
 - **Keys never leave the WDK account.** All signing is delegated to the account abstraction layer — `GatewaySwidge` never has direct key access.
 - **No external wallet dependencies.** This package does not depend on `viem`, `@gobob/bob-sdk`, or any other wallet library.
+- **The order tx is checked before signing.** Every create-order transaction must be `exec` on the pinned AllowanceHolder, built for the requested source chain, moving the source token and at most `fromTokenAmount` of it, with native value beyond the swap capped by `maxNativeFee` (and a Tron `feeLimit` capped at 100 TRX); an onramp's BTC amount must equal `fromTokenAmount`. Anything else is refused (`VALIDATION_ERROR`) before the account signs. EVM gas is not part of the order (the account estimates it) and is not capped here: to bound it, set the WDK account's `transactionMaxFee`.
 - **Approval hygiene.** For offramp/tokenSwap routes, call `getRequiredApproval()` first and approve exactly what it returns — an unbounded allowance to the Gateway's AllowanceHolder, whose address the module pins per chain. Don't approve any other spender; revoke the allowance if you stop using the Gateway.
 - **BOB attribution key.** The default `bearerToken` is a shared gateway-wdk attribution token that attributes volume to BOB at 0 cost. Replace it with your own key only if you have a direct API agreement.
 

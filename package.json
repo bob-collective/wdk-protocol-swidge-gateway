@@ -71,7 +71,8 @@
     "format": "prettier --write .",
     "verify:consumer": "pnpm build && node scripts/verify-consumer.mjs",
     "derive-addresses": "tsx scripts/derive-addresses.ts",
-    "execute-swap": "tsx scripts/execute-swap.ts"
+    "execute-swap": "tsx scripts/execute-swap.ts",
+    "gen:tokens": "tsx scripts/gen-tokens.ts && prettier --write src/tokens.ts"
   },
   "dependencies": {
     "@bitcoinerlab/secp256k1": "2.0.0",
@@ -80,7 +81,7 @@
     "tronweb": "6.5.1"
   },
   "peerDependencies": {
-    "@tetherto/wdk-wallet": ">=1.0.0-beta.13 <2.0.0"
+    "@tetherto/wdk-wallet": ">=1.0.0-beta.17 <2.0.0"
   },
   "devDependencies": {
     "@tetherto/wdk": "1.0.0-beta.22",
