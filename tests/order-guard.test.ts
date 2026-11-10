@@ -164,6 +164,20 @@ describe('order provenance and encoding', () => {
     expect(client.createOrder).not.toHaveBeenCalled()
   })
 
+  test.each([['0xf4240'], [1e21], [1.5], ['']])(
+    'a fromTokenAmount of %j is refused before any gateway call',
+    async (fromTokenAmount) => {
+      const { sw, client, account } = setup(order())
+      const r = { ...route(), fromTokenAmount: fromTokenAmount as unknown as bigint }
+      for (const call of [() => sw.swidge(r), () => sw.simulateSwidge(r)]) {
+        await expect(call()).rejects.toThrow(/fromTokenAmount must be a non-negative integer/)
+      }
+      expect(client.getQuote).not.toHaveBeenCalled()
+      expect(client.createOrder).not.toHaveBeenCalled()
+      expect(account.sendTransaction).not.toHaveBeenCalled()
+    }
+  )
+
   test('an EVM `to` must be 0x hex, not the holder in Tron 41-hex form', async () => {
     await refused(
       order({ to: '41' + CANONICAL_HOLDER.slice(2) }),
@@ -230,6 +244,15 @@ describe('native value', () => {
       await expect(call()).rejects.toThrow(/maxNativeFee must be a non-negative integer/)
     }
     expect(client.getQuote).not.toHaveBeenCalled()
+  })
+
+  test('a null per-call config falls back to the instance maxNativeFee', async () => {
+    const { sw } = setup(order({ value: '1001' }), { maxNativeFee: 1000 })
+    await expect(sw.swidge(route(), null as never)).rejects.toThrow(/above maxNativeFee 1000/)
+    const ok = setup(order({ value: '1000' }), { maxNativeFee: 1000 })
+    await expect(ok.sw.swidge(route(), null as never)).resolves.toMatchObject({
+      hash: '0xtxhash',
+    })
   })
 
   test('maxNativeFee: 0 forbids any native value on an ERC-20 order', async () => {

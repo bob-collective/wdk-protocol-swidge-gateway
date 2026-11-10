@@ -262,6 +262,9 @@ export class GatewaySwidge extends SwidgeProtocol {
           'account with getAddress()'
       )
     }
+    // Before any gateway call: an amount the guard would refuse ('1e+21', '0x…') must not leave
+    // an orphaned order behind on the gateway.
+    const amount = parseBaseUnits('fromTokenAmount', params.amount)
     const quote = (await this._client.getQuote(params)) as Record<string, unknown>
     // Onramp quotes carry no srcChain (the source is always Bitcoin); every other variant must
     // name the chain it was built for, so a quote for another chain can't pass by omission.
@@ -284,7 +287,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     assertOrderPayload(payload, {
       chain: params.srcChain!,
       token: params.srcToken!,
-      amount: parseBaseUnits('fromTokenAmount', params.amount),
+      amount,
       maxNativeFee,
     })
     return { quote, payload }
@@ -295,10 +298,10 @@ export class GatewaySwidge extends SwidgeProtocol {
    * undefined (→ the chain default). `swidge()`, `simulateSwidge()` and `getRequiredApproval()`
    * all resolve it here, so an order one of them accepts the others accept too.
    */
-  private _resolveMaxNativeFee(config: Record<string, unknown>): bigint | undefined {
-    return config.maxNativeFee == null
-      ? this._maxNativeFee
-      : parseBaseUnits('maxNativeFee', config.maxNativeFee)
+  private _resolveMaxNativeFee(config: Record<string, unknown> | null): bigint | undefined {
+    // `null` from JS callers, as `_aaConfig` tolerates it.
+    const perCall = config?.maxNativeFee
+    return perCall == null ? this._maxNativeFee : parseBaseUnits('maxNativeFee', perCall)
   }
 
   private _aaConfig(config: Record<string, unknown>): unknown {
