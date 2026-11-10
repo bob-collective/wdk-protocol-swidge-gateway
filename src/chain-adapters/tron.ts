@@ -4,7 +4,8 @@ import { MAX_UINT256 } from '../allowance-holder.js'
 const APPROVE_SELECTOR = 'approve(address,uint256)'
 const ALLOWANCE_SELECTOR = 'allowance(address,address)'
 
-const DEFAULT_FEE_LIMIT_SUN = 100_000_000
+/** The `feeLimit` (sun) an order call gets when the gateway sends none; the order guard assumes it. */
+export const DEFAULT_FEE_LIMIT_SUN = 100_000_000
 
 const BROADCAST_CONFIRM_TIMEOUT_MS = 20_000
 const BROADCAST_POLL_INTERVAL_MS = 1_500
@@ -17,7 +18,7 @@ const NATIVE_TOKENS = new Set([
 ])
 
 /** Base58Check is case-sensitive, so match it verbatim; hex is not, so also try lowercased. */
-function isNativeToken(tokenAddress: string): boolean {
+export function isNativeToken(tokenAddress: string): boolean {
   return NATIVE_TOKENS.has(tokenAddress) || NATIVE_TOKENS.has(tokenAddress.toLowerCase())
 }
 

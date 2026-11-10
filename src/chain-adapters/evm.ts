@@ -3,6 +3,11 @@ import { MAX_UINT256 } from '../allowance-holder.js'
 
 const ZERO = '0x0000000000000000000000000000000000000000'
 
+/** The zero address stands for the chain's gas token, which needs no approval. */
+export function isNativeToken(tokenAddress: string): boolean {
+  return tokenAddress.toLowerCase() === ZERO
+}
+
 /**
  * USDT on Ethereum mainnet. Its non-standard `approve` reverts when changing a non-zero allowance
  * to another non-zero value, and WDK's `WalletAccountEvm.approve` refuses that case up front.
@@ -95,7 +100,7 @@ export const evmAdapter = {
     amount: bigint | string | number,
     opts: { chain?: string } = {}
   ): Promise<EvmRequiredApproval | null> {
-    if (!tokenAddress || tokenAddress.toLowerCase() === ZERO) return null
+    if (!tokenAddress || isNativeToken(tokenAddress)) return null
     const allowance = BigInt(await account.getAllowance!(tokenAddress, spender))
     if (allowance >= BigInt(amount)) return null
     const approval = { token: tokenAddress, spender, amount: MAX_UINT256 }

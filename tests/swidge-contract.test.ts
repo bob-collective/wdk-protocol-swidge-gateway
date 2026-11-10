@@ -33,6 +33,7 @@ type Quote = Partial<ReturnType<typeof offrampQuote> & ReturnType<typeof tokenSw
 
 class DummyEvmAccount {
   sendTransaction = vi.fn(async () => ({ hash: '0xtxhash' }))
+  quoteSendTransaction = vi.fn(async () => ({ fee: 1n }))
   async getAddress() {
     return '0xsender'
   }
@@ -243,6 +244,54 @@ describe('minAmountOut', () => {
       )
     )
     expect(getQuote).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    ['address', USDT_BASE, `${USDT_BASE} on bitcoin`],
+    ['chain', 'base', `${ZERO} on base`],
+  ])(
+    "a quote whose output %s is not the requested one is refused: the floor's units are unknown",
+    async (field, value, got) => {
+      const quote = offrampQuote()
+      ;(quote.offramp.outputAmount as Record<string, string>)[field] = value
+      const { sw } = setup({ quote })
+
+      await expect(sw.swidge({ ...OFFRAMP, minAmountOut: 1n })).rejects.toMatchObject(
+        gatewayError(
+          ERR.VALIDATION,
+          `cannot verify minAmountOut: the quote's output is ${got}, not the requested ${ZERO} ` +
+            'on bitcoin'
+        )
+      )
+      expect(createOrder).not.toHaveBeenCalled()
+    }
+  )
+
+  test('an EVM output address in another letter case is the same token', async () => {
+    const quote = tokenSwapQuote('base', 'base', {
+      dstToken: '0x' + USDC_BASE.slice(2).toUpperCase(),
+      recipient: '0xsender',
+    })
+    const { sw } = setup({ quote, order: tokenSwapOrder() })
+
+    await sw.swap({
+      tokenIn: USDT_BASE,
+      tokenOut: USDC_BASE,
+      tokenInAmount: 100_000_000n,
+      minAmountOut: 1n,
+    })
+
+    expect(createOrder).toHaveBeenCalledTimes(1)
+  })
+
+  test('a minAmountOut of 0 holds for any output, so it is not checked', async () => {
+    const quote = offrampQuote() as { offramp: Record<string, unknown> }
+    quote.offramp.slippage = undefined
+    const { sw } = setup({ quote: quote as Quote })
+
+    await sw.swidge({ ...OFFRAMP, minAmountOut: 0n })
+
+    expect(createOrder).toHaveBeenCalledTimes(1)
   })
 
   test.each([undefined, ''])(
