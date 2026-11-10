@@ -364,7 +364,7 @@ The approval is **unbounded** (`amount` is `2^256 - 1`), as Gateway V4 and `@gob
 
 On Tron the allowance is read with a constant-contract call through the resolved provider, since `WalletAccountTron` exposes no allowance getter. Feed the result to `buildTronApproval()` to get a call descriptor `WalletAccountTron.sendTransaction` accepts.
 
-**Important:** On a cache miss, this method creates a Gateway order internally to discover the spender contract address (the V4 API has no read-only spender lookup endpoint). Results are cached per route on the `GatewaySwidge` instance, so callers should not invoke `getRequiredApproval` before every swap — call it once per route and reuse the result.
+**Important:** On a cache miss, this method creates a Gateway order internally to discover the spender contract address (the V4 API has no read-only spender lookup endpoint). Results are cached per route on the `GatewaySwidge` instance, so callers should not invoke `getRequiredApproval` before every swap — call it once per route and reuse the result. Onramps and native source tokens need no approval: they return `null` without creating an order.
 
 #### Inherited methods
 

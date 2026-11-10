@@ -39,6 +39,8 @@ function setup(tx: OrderTx, config: GatewaySwidgeConfig = {}, fromChain = 'base'
   const account = {
     getAddress: vi.fn(async () => (fromChain === 'tron' ? 'TSender' : '0xsender')),
     sendTransaction: vi.fn(async () => ({ hash: '0xtxhash' })),
+    quoteSendTransaction: vi.fn(async () => ({ fee: 1n })),
+    getAllowance: vi.fn(async () => 0n),
   }
   const sw = new GatewaySwidge(account, {
     fromChain,
@@ -426,6 +428,8 @@ describe('onramp', () => {
     await expect(swidge()).rejects.toThrow(
       'refusing to sign the order: the quote asks for 100001 sats, but fromTokenAmount is 100000'
     )
+    // The amount is the quote's, so it is refused before an order exists.
+    expect(client.createOrder).not.toHaveBeenCalled()
     expect(signTransaction).not.toHaveBeenCalled()
     expect(client.registerTx).not.toHaveBeenCalled()
   })
@@ -433,10 +437,11 @@ describe('onramp', () => {
   test.each([['0x186a0'], [''], [' 100000']])(
     'a quote amount of %j is refused, not reinterpreted',
     async (amount) => {
-      const { swidge, signTransaction } = onramp(amount)
+      const { swidge, signTransaction, client } = onramp(amount)
       await expect(swidge()).rejects.toThrow(
         /quote onramp.inputAmount.amount must be a non-negative integer in base units/
       )
+      expect(client.createOrder).not.toHaveBeenCalled()
       expect(signTransaction).not.toHaveBeenCalled()
     }
   )

@@ -1,9 +1,8 @@
 // simulateSwidge() on Bitcoin and EVM source routes: everything swidge() does short of
 // broadcasting. Tron routes are covered in tron.test.ts.
 import { beforeEach, describe, test, expect, vi } from 'vitest'
-import { ERR, GatewaySwidge } from '../src/index.js'
+import { AccountRequiredError, GatewaySwidge } from '../src/index.js'
 import type { GatewayClient } from '../src/index.js'
-import { gatewayError } from './helpers.js'
 import {
   ALLOWANCE_HOLDER,
   BTC_SENDER,
@@ -133,15 +132,19 @@ describe('simulateSwidge: onramp', () => {
     })
   })
 
-  test('an account that cannot sign is NOT_SUPPORTED', async () => {
+  test('an account that cannot sign is refused before any gateway call', async () => {
     const sw = new GatewaySwidge({ getAddress: async () => BTC_SENDER } as never, {
       fromChain: 'bitcoin',
       client,
     })
 
-    await expect(sw.simulateSwidge(ONRAMP)).rejects.toMatchObject(
-      gatewayError(ERR.NOT_SUPPORTED, 'bitcoin account cannot sign transactions')
+    await expect(sw.simulateSwidge(ONRAMP)).rejects.toThrow(
+      new AccountRequiredError(
+        'simulateSwidge() needs an account that implements signTransaction()'
+      )
     )
+    expect(getQuote).not.toHaveBeenCalled()
+    expect(createOrder).not.toHaveBeenCalled()
   })
 })
 
@@ -271,14 +274,29 @@ describe('simulateSwidge: EVM offramp', () => {
     })
   })
 
-  test('an account without quoteSendTransaction is NOT_SUPPORTED', async () => {
+  test('an account without quoteSendTransaction is refused before any gateway call', async () => {
     const account = new DummyEvmAccount()
     account.quoteSendTransaction = undefined
     const sw = new GatewaySwidge(account as never, { fromChain: 'base', client })
 
-    await expect(sw.simulateSwidge(OFFRAMP)).rejects.toMatchObject(
-      gatewayError(ERR.NOT_SUPPORTED, 'evm account does not support quoteSendTransaction')
+    await expect(sw.simulateSwidge(OFFRAMP)).rejects.toThrow(
+      new AccountRequiredError(
+        'simulateSwidge() needs an account that implements quoteSendTransaction()'
+      )
     )
+    expect(getQuote).not.toHaveBeenCalled()
+    expect(createOrder).not.toHaveBeenCalled()
+  })
+
+  test('no account is refused before any gateway call', async () => {
+    const sw = new GatewaySwidge(undefined, { fromChain: 'base', client })
+
+    await expect(sw.simulateSwidge(OFFRAMP)).rejects.toThrow(
+      new AccountRequiredError(
+        'simulateSwidge() needs an account that implements quoteSendTransaction()'
+      )
+    )
+    expect(getQuote).not.toHaveBeenCalled()
   })
 
   test('carries a USDT-on-Ethereum allowance reset through to the approval', async () => {

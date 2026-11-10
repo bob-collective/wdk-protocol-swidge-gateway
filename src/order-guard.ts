@@ -2,6 +2,8 @@ import { GatewaySwidgeError, ERR } from './errors.js'
 import { allowanceHolderFor, toHexAddress } from './allowance-holder.js'
 import { sameChain } from './chains.js'
 import type { OrderPayload } from './map/order.js'
+import type { GatewayQuoteV4 } from './map/quote.js'
+import { DEFAULT_FEE_LIMIT_SUN } from './chain-adapters/tron.js'
 
 /** `exec(address operator, address token, uint256 amount, address target, bytes data)`. */
 export const EXEC_SELECTOR = '2213bc0b'
@@ -175,7 +177,8 @@ function assertContractCall(
   }
 
   if (payload.kind === 'tron') {
-    const feeLimit = txUint('feeLimit', payload.tx.feeLimit, MAX_TRON_FEE_LIMIT_SUN, tx)
+    // An absent feeLimit is the one the Tron adapter builds the call with.
+    const feeLimit = txUint('feeLimit', payload.tx.feeLimit, BigInt(DEFAULT_FEE_LIMIT_SUN), tx)
     if (feeLimit > MAX_TRON_FEE_LIMIT_SUN) {
       refuse(`order tx feeLimit ${feeLimit} sun is above ${MAX_TRON_FEE_LIMIT_SUN}`, tx)
     }
@@ -198,6 +201,28 @@ function assertContractCall(
       `order tx sends ${extra} native base units on top of the swap, above maxNativeFee ${cap}`,
       tx
     )
+  }
+}
+
+/**
+ * An onramp's BTC amount comes from the quote (the order carries none), so it is checked before
+ * create-order, and a quote it refuses leaves no orphaned order: it must equal `fromTokenAmount`.
+ *
+ * @param quote - The get-quote response, holding the onramp quote.
+ * @param amount - The requested `fromTokenAmount`, in sats.
+ * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the amount is not a plain decimal or differs.
+ */
+export function assertOnrampAmount(quote: GatewayQuoteV4, amount: bigint): void {
+  const quoted = parseBaseUnits(
+    'quote onramp.inputAmount.amount',
+    quote.onramp?.inputAmount?.amount
+  )
+  assertSats(quoted, amount, quote)
+}
+
+function assertSats(quoted: bigint, amount: bigint, cause: unknown): void {
+  if (quoted !== amount) {
+    refuse(`the quote asks for ${quoted} sats, but fromTokenAmount is ${amount}`, cause)
   }
 }
 
@@ -236,12 +261,7 @@ function assertContractCall(
  */
 export function assertOrderPayload(payload: OrderPayload, ctx: OrderGuardContext): void {
   if (payload.kind === 'btc') {
-    if (payload.amount !== ctx.amount) {
-      refuse(
-        `the quote asks for ${payload.amount} sats, but fromTokenAmount is ${ctx.amount}`,
-        payload
-      )
-    }
+    assertSats(payload.amount, ctx.amount, payload)
     return
   }
   assertContractCall(payload, ctx)

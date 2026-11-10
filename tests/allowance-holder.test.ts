@@ -4,7 +4,7 @@
 // first, so a wrong spender trips there; the approval check stays behind it as a backstop. Tron
 // routes are covered in tron.test.ts.
 import { beforeEach, describe, test, expect, vi } from 'vitest'
-import { ERR, GatewaySwidge } from '../src/index.js'
+import { AccountRequiredError, ERR, GatewaySwidge } from '../src/index.js'
 import type { GatewayClient } from '../src/index.js'
 import { gatewayError } from './helpers.js'
 import { execData } from './fixtures/exec.js'
@@ -198,6 +198,21 @@ describe('getRequiredApproval', () => {
 
     expect(approval).toBe(null)
     expect(account.getAllowance).not.toHaveBeenCalled()
+    // No approval is due, so no order is created to find the spender.
+    expect(getQuote).not.toHaveBeenCalled()
+    expect(createOrder).not.toHaveBeenCalled()
+  })
+
+  test('an account without getAllowance is refused before any gateway call', async () => {
+    const sw = new GatewaySwidge(undefined, { fromChain: 'base', client })
+
+    await expect(sw.getRequiredApproval(OFFRAMP)).rejects.toThrow(
+      new AccountRequiredError(
+        'getRequiredApproval() needs an account that implements getAllowance()'
+      )
+    )
+    expect(getQuote).not.toHaveBeenCalled()
+    expect(createOrder).not.toHaveBeenCalled()
   })
 
   test('creates an order once per route to find the spender, then reuses it', async () => {
