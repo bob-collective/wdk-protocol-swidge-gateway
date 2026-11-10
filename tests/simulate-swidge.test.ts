@@ -219,6 +219,17 @@ describe('simulateSwidge: EVM offramp', () => {
     })
   })
 
+  test('gasEstimate is the fee in wei, never gas units', async () => {
+    const account = new DummyEvmAccount()
+    account.getAllowance.mockResolvedValue(100_000_000n)
+    account.quoteSendTransaction!.mockResolvedValue({ gas: 21_000n })
+    const sw = new GatewaySwidge(account as never, { fromChain: 'base', client })
+
+    const { evm } = (await sw.simulateSwidge(OFFRAMP)) as { evm: { gasEstimate: unknown } }
+
+    expect(evm.gasEstimate).toBe(null)
+  })
+
   test('reports the approval still due when the allowance falls short', async () => {
     const account = new DummyEvmAccount()
     account.getAllowance.mockResolvedValue(50n)

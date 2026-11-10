@@ -38,6 +38,20 @@ function formatUsd(v: bigint): string {
   return frac ? `${s.slice(0, -USD_DECIMALS)}.${frac}` : s.slice(0, -USD_DECIMALS)
 }
 
+/**
+ * Whether a fee breakdown carries at least one fee amount. `{}`, a non-object, or one holding only
+ * non-fee entries (`fastestFeeRate`) yields no fee lines, so it is as unverifiable as none at all.
+ */
+function hasFeeEntry(breakdown: unknown): boolean {
+  return (
+    breakdown !== null &&
+    typeof breakdown === 'object' &&
+    Object.values(breakdown).some(
+      (entry) => entry !== null && typeof entry === 'object' && 'amount' in entry
+    )
+  )
+}
+
 /** The fee token's USD price may drift this far from the input's: 1%, in hundredths. */
 const PRICE_DRIFT = 101n
 
@@ -103,7 +117,7 @@ export function assertFeeCaps(
 
   for (const [cap, label, types] of active) {
     const limit = scaledCap(cap, caps[cap])
-    if (variant !== 'tokenSwap' && !inner.feeBreakdown) {
+    if (variant !== 'tokenSwap' && !hasFeeEntry(inner.feeBreakdown)) {
       throw new MaximumFeeExceededError(
         `cannot verify ${cap}: the ${variant} quote has no fee breakdown`,
         {}

@@ -780,9 +780,15 @@ describe('fee caps', () => {
     expect(createOrder).not.toHaveBeenCalled()
   })
 
-  test('fails closed when an offramp quote has no fee breakdown', async () => {
+  // `{}` or a breakdown with no fee amount yields no fee lines: as unverifiable as none at all.
+  test.each([
+    ['absent', undefined],
+    ['empty', {}],
+    ['not an object', 'none'],
+    ['without a fee amount', { fastestFeeRate: '5' }],
+  ])('fails closed when an offramp quote’s fee breakdown is %s', async (_label, breakdown) => {
     const quote = offrampQuote() as { offramp: Record<string, unknown> }
-    delete quote.offramp.feeBreakdown
+    quote.offramp.feeBreakdown = breakdown
     const { sw } = setup({ quote: quote as Quote, config: { maxProtocolFeeBps: 10_000 } })
 
     await expect(sw.swidge(OFFRAMP)).rejects.toThrow(

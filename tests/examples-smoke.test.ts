@@ -40,6 +40,7 @@ describe('BTC examples', () => {
               inputAmount: { amount: '100000', address: q.srcToken, chain: 'bitcoin' },
               outputAmount: { amount: '99000', address: q.dstToken, chain: 'base' },
               recipient: q.recipient,
+              slippage: '50',
             },
           },
         }
@@ -64,7 +65,7 @@ describe('BTC examples', () => {
       transactions: [{ hash: EXAMPLE_TXID, chain: 'bitcoin', type: 'source' }],
       fromTokenAmount: 100_000n,
       toTokenAmount: 99_000n,
-      toTokenAmountMin: 99_000n,
+      toTokenAmountMin: 98_505n, // 99000 × (1 − 50 bps)
     })
   })
 
@@ -75,7 +76,7 @@ describe('BTC examples', () => {
       quote: {
         fromTokenAmount: 100_000n,
         toTokenAmount: 99_000n,
-        toTokenAmountMin: 99_000n,
+        toTokenAmountMin: 98_505n, // 99000 × (1 − 50 bps)
         fees: [],
         affiliateApplied: false,
       },
@@ -143,6 +144,7 @@ describe('Tron offramp example', () => {
               outputAmount: { amount: '950', address: q.dstToken, chain: 'bitcoin' },
               srcChain: 'tron',
               recipient: q.recipient,
+              slippage: 50,
               refundAddress: q.refundAddress,
             },
           },
@@ -194,7 +196,7 @@ describe('Tron offramp example', () => {
       transactions: [{ hash: ORDER_TX.txID, chain: 'tron', type: 'source' }],
       fromTokenAmount: 1_000_000n,
       toTokenAmount: 950n,
-      toTokenAmountMin: 950n,
+      toTokenAmountMin: 945n, // 950 × (1 − 50 bps), rounded down
     })
   })
 })

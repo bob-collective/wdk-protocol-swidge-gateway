@@ -711,7 +711,8 @@ export class GatewaySwidge extends SwidgeProtocol {
     const swidgeQuote = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
     assertQuoteMatchesRequest(quote, variant, params)
     if (checks.minAmountOut !== undefined) {
-      // Without the echoed slippage, toTokenAmountMin would be the bare estimate — not a floor.
+      // Without the echoed slippage no floor is known (toTokenAmountMin is 0): say so, rather than
+      // report it as a threshold miss.
       if (quoteSlippageBps(quote) === null) {
         throw new GatewaySwidgeError(
           ERR.VALIDATION,

@@ -128,15 +128,19 @@ export function quoteSlippageBps(gw: GatewayQuoteV4): number | null {
   return Number.isInteger(bps) && bps >= 0 && bps <= 10_000 ? bps : null
 }
 
-/** `outputAmount × (1 − slippage)`; the estimate itself when the quote carries no slippage. */
+/**
+ * `outputAmount × (1 − slippage)`; 0 when the quote carries no slippage — no floor is known then,
+ * and the estimate itself is not one.
+ */
 function minOutput(output: bigint, bps: number | null): bigint {
-  return bps === null ? output : (output * (BPS - BigInt(bps))) / BPS
+  return bps === null ? 0n : (output * (BPS - BigInt(bps))) / BPS
 }
 
 /**
  * Map a `GatewayQuoteV4` wire object to a WDK `SwidgeQuote`.
  *
- * - `toTokenAmountMin` is `outputAmount × (1 − slippage)`, using the slippage the gateway echoes.
+ * - `toTokenAmountMin` is `outputAmount × (1 − slippage)`, using the slippage the gateway echoes
+ *   (0 if it echoes none).
  * - `fees` lists every non-zero fee-breakdown entry in its own token; all are already deducted
  *   from `toTokenAmount` (`included: true`).
  * - `priceImpact` is the gateway's fraction as a number — negative means a loss.

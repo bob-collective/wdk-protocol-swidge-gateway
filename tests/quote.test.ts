@@ -194,7 +194,8 @@ describe('quoteSwidge: response', () => {
     })
   })
 
-  test('without a slippage echo, toTokenAmountMin is the estimate itself', async () => {
+  // The estimate is not a floor: with no slippage known, nothing below it is ruled out.
+  test('without a slippage echo, toTokenAmountMin is 0', async () => {
     const response = offrampQuote() as { offramp: Record<string, unknown> }
     delete response.offramp.slippage
     getQuote.mockResolvedValue(response)
@@ -205,7 +206,7 @@ describe('quoteSwidge: response', () => {
     expect(quote).toEqual({
       fromTokenAmount: 100_000_000n,
       toTokenAmount: 133_315n,
-      toTokenAmountMin: 133_315n,
+      toTokenAmountMin: 0n,
       fees: [SOLVER_FEE_OFFRAMP, INCLUSION_FEE],
       estimatedDuration: 648,
       priceImpact: -0.0045,
