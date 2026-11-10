@@ -595,6 +595,31 @@ describe('recipient', () => {
     })
   })
 
+  test('both spellings of one chain (hyperevm/hyperliquid) count as same-chain', async () => {
+    const { sw } = setup({
+      quote: tokenSwapQuote('hyperevm', 'hyperliquid'),
+      config: { fromChain: 'hyperevm' },
+    })
+
+    await sw.quoteSwidge({
+      fromToken: USDT_BASE,
+      toToken: USDC_BASE,
+      toChain: 'hyperliquid',
+      fromTokenAmount: 100_000_000n,
+    })
+
+    expect(getQuote).toHaveBeenCalledWith({
+      srcChain: 'hyperevm',
+      dstChain: 'hyperliquid',
+      srcToken: USDT_BASE,
+      dstToken: USDC_BASE,
+      amount: '100000000',
+      recipient: '0xsender',
+      sender: '0xsender',
+      refundAddress: '0xsender',
+    })
+  })
+
   test('a cross-chain route without a recipient is refused before quoting', async () => {
     const { sw } = setup()
 

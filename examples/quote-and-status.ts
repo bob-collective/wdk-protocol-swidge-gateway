@@ -1,8 +1,15 @@
 // Demonstrates quoting a swidge and checking order status without executing a transaction.
 import { GatewaySwidge } from '../src/index.js'
 import type { HttpTransport } from '../src/http.js'
+import type { IWalletAccountReadOnly } from '../src/index.js'
 
-export async function run({ account, http }: { account?: unknown; http?: HttpTransport }) {
+export async function run({
+  account,
+  http,
+}: {
+  account: IWalletAccountReadOnly
+  http?: HttpTransport
+}) {
   const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', http })
   const quote = await sw.quoteSwidge({
     fromToken: 'BTC',
