@@ -66,7 +66,7 @@ function refuse(message: string, cause?: unknown): never {
 }
 
 /** A non-negative integer from a bigint, a safe integer, or a plain decimal string; else null. */
-function uint(value: unknown): bigint | null {
+export function uint(value: unknown): bigint | null {
   if (typeof value === 'bigint') return value >= 0n ? value : null
   if (typeof value === 'number')
     return Number.isSafeInteger(value) && value >= 0 ? BigInt(value) : null

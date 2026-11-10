@@ -1,7 +1,6 @@
 // Canonical `AllowanceHolder.exec(operator, token, amount, target, data)` calldata, as the gateway
 // builds every offramp/tokenSwap order tx (bob-gateway `wrap_via_allowance_holder`).
 import { toHexAddress } from '../../src/allowance-holder.js'
-import { USDT } from './tron.js'
 
 export const CANONICAL_HOLDER = '0x0000000000001fF3684f28c67538d4D072C22734'
 /** Stand-in GatewayRouter (exec's operator and target). */
@@ -37,8 +36,3 @@ export function execData({
     padded
   )
 }
-
-/** exec calldata moving 1 USDT (Tron) — the Tron order tx used across the tron route tests. */
-export const TRON_EXEC = execData({ token: USDT, amount: 1_000_000n })
-/** Same, without `0x`, as it sits in a built Tron tx's `raw_data`. */
-export const TRON_EXEC_HEX = TRON_EXEC.slice(2)

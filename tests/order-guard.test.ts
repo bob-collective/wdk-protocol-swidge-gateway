@@ -25,10 +25,11 @@ type OrderTx = {
 
 function setup(tx: OrderTx, config: GatewaySwidgeConfig = {}, fromChain = 'base') {
   const client = {
-    getQuote: vi.fn(async () => ({
+    // Echoes the request, so the quote binding passes and the order tx is what's under test.
+    getQuote: vi.fn(async (params: Record<string, string>) => ({
       offramp: {
-        inputAmount: { amount: String(AMOUNT) },
-        outputAmount: { amount: '1300' },
+        inputAmount: { amount: params.amount, chain: fromChain },
+        outputAmount: { amount: '1300', chain: 'bitcoin' },
         srcChain: fromChain,
       },
     })),
@@ -157,10 +158,13 @@ describe('order provenance and encoding', () => {
   test('a quote without srcChain is refused before create-order', async () => {
     const { sw, client } = setup(order())
     client.getQuote.mockResolvedValueOnce({
-      offramp: { inputAmount: { amount: String(AMOUNT) }, outputAmount: { amount: '1300' } },
+      offramp: {
+        inputAmount: { amount: String(AMOUNT), chain: 'base' },
+        outputAmount: { amount: '1300', chain: 'bitcoin' },
+      },
     } as never)
     await expect(sw.swidge(route())).rejects.toThrow(
-      'quote is for source chain undefined, but the route was requested from base'
+      'quote source chain undefined does not match the requested base'
     )
     expect(client.createOrder).not.toHaveBeenCalled()
   })
@@ -339,7 +343,12 @@ describe('Tron order tx', () => {
 describe('onramp', () => {
   function onramp(quoteAmount: string) {
     const client = {
-      getQuote: vi.fn(async () => ({ onramp: { inputAmount: { amount: quoteAmount } } })),
+      getQuote: vi.fn(async () => ({
+        onramp: {
+          inputAmount: { amount: quoteAmount, chain: 'bitcoin' },
+          outputAmount: { amount: '1300', chain: 'base' },
+        },
+      })),
       createOrder: vi.fn(async () => ({ onramp: { order_id: 'o', address: 'bc1qdeposit' } })),
       registerTx: vi.fn(),
     }
@@ -359,11 +368,14 @@ describe('onramp', () => {
     return { swidge, client, signTransaction }
   }
 
+  // The quote binding refuses this before create-order; the order guard's own onramp amount check
+  // stays behind it as a backstop.
   test('a quote asking for more BTC than fromTokenAmount is refused before signing', async () => {
     const { swidge, client, signTransaction } = onramp('100001')
     await expect(swidge()).rejects.toThrow(
-      'refusing to sign the order: the quote asks for 100001 sats, but fromTokenAmount is 100000'
+      'quote input amount 100001 does not match the requested 100000'
     )
+    expect(client.createOrder).not.toHaveBeenCalled()
     expect(signTransaction).not.toHaveBeenCalled()
     expect(client.registerTx).not.toHaveBeenCalled()
   })
@@ -373,7 +385,7 @@ describe('onramp', () => {
     async (amount) => {
       const { swidge, signTransaction } = onramp(amount)
       await expect(swidge()).rejects.toThrow(
-        /quote onramp.inputAmount.amount must be a non-negative integer/
+        /quote inputAmount.amount is not an integer amount in base units/
       )
       expect(signTransaction).not.toHaveBeenCalled()
     }

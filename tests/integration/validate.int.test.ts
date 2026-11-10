@@ -228,5 +228,30 @@ const RUN = !!process.env.TEST_SEED
         })
       }
     })
+
+    // getSupportedTokens() omits tokens missing from src/tokens.ts, and getSupportedChains() gives
+    // unknown chains no native token — so a route the gateway adds must land in both tables.
+    test('every live route chain and token has metadata (else: pnpm gen:tokens)', async () => {
+      const { GatewayClient } = await import('../../src/index.js')
+      const { CHAINS } = await import('../../src/chains.js')
+      const { TOKENS } = await import('../../src/tokens.js')
+      const { tokenKey } = await import('../../src/map/routes.js')
+      const routes = (await new GatewayClient().getRoutes()) as {
+        srcChain: string
+        dstChain: string
+        srcToken: string
+        dstToken: string
+      }[]
+      expect(routes.length).toBeGreaterThan(0)
+      const pairs = routes.flatMap((r) => [
+        [r.srcChain, r.srcToken],
+        [r.dstChain, r.dstToken],
+      ])
+      const missingChains = [...new Set(pairs.map(([c]) => c))].filter((c) => !CHAINS[c])
+      const missingTokens = [...new Set(pairs.map(([c, t]) => tokenKey(c, t)))].filter(
+        (k) => !TOKENS[k]
+      )
+      expect({ missingChains, missingTokens }).toEqual({ missingChains: [], missingTokens: [] })
+    })
   }
 )

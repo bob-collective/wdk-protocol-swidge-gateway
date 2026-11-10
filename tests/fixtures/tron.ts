@@ -1,6 +1,8 @@
 // The adapter's pre-signing check requires `raw_data`, `raw_data_hex` and `txID` to agree,
 // so these builders derive the latter two with tronweb's own serializer — no stub objects.
 import { utils } from 'tronweb'
+import { USDT_ETHEREUM, ZERO } from './gateway.js'
+import { execData } from './exec.js'
 
 // Real mainnet addresses — `toHex` rejects made-up Base58, and the adapter converts.
 export const OWNER = 'TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR'
@@ -8,6 +10,13 @@ export const OWNER = 'TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR'
 export const REGISTRY = 'TAfbit1ENsRmtZbPQfYU3srURpfYuWYS7K'
 export const USDT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
 export const SPENDER = 'TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7'
+
+/** exec calldata moving 1 USDT (Tron). */
+export const TRON_EXEC = execData({ token: USDT, amount: 1_000_000n })
+/** Same, without `0x`, as it sits in a built Tron tx's `raw_data`. */
+export const TRON_EXEC_HEX = TRON_EXEC.slice(2)
+/** exec calldata moving `tronOfframpQuote`'s 50 USDT: the order call `buildTronTx()` builds by default. */
+export const TRON_OFFRAMP_EXEC = execData({ token: USDT, amount: 50_000_000n })
 
 const TIMESTAMP = Date.now()
 
@@ -34,7 +43,7 @@ export function buildTronTx(overrides: TronTxOverrides = {}) {
   const {
     owner = OWNER,
     to = REGISTRY,
-    data = 'abcdef',
+    data = TRON_OFFRAMP_EXEC.slice(2),
     callValue = 0,
     feeLimit = 50_000_000,
     timestamp = TIMESTAMP,
@@ -76,4 +85,55 @@ export function buildTronTx(overrides: TronTxOverrides = {}) {
   tx.raw_data_hex = utils.transaction.txPbToRawDataHex(pb).toLowerCase()
   tx.txID = utils.transaction.txPbToTxID(pb).replace(/^0x/, '').toLowerCase()
   return tx
+}
+
+export const BTC_RECIPIENT = 'bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'
+
+/** get-quote: 50 USDT on Tron → BTC, captured from mainnet (2026-11-09) for the `OWNER` account. */
+export function tronOfframpQuote() {
+  return {
+    offramp: {
+      srcChain: 'tron',
+      tokenAddress: USDT,
+      inputAmount: { amount: '50000000', address: USDT, chain: 'tron', usd: '49.94' },
+      outputAmount: { amount: '66086', address: ZERO, chain: 'bitcoin', usd: '49.25' },
+      totalFeeUsd: '0.50',
+      feeBreakdown: {
+        solverFee: { amount: '498', address: USDT_ETHEREUM, chain: 'ethereum', usd: '0' },
+        inclusionFee: { amount: '660', address: ZERO, chain: 'bitcoin', usd: '0.49' },
+        protocolFee: { amount: '0', address: USDT_ETHEREUM, chain: 'ethereum', usd: '0' },
+        affiliateFee: { amount: '0', address: USDT_ETHEREUM, chain: 'ethereum', usd: '0' },
+        fastestFeeRate: '3',
+      },
+      sender: OWNER,
+      recipient: BTC_RECIPIENT,
+      slippage: 50,
+      affiliates: [],
+      txTo: REGISTRY,
+      estimatedTimeInSecs: 648,
+      priceImpact: '-0.0040',
+      refundAddress: OWNER,
+    },
+  }
+}
+
+/**
+ * create-order for `tronOfframpQuote`: a `tron`-tagged `GatewayTxData` for the call `buildTronTx()`
+ * builds by default (`TRON_OFFRAMP_EXEC`, 50 TRX fee limit).
+ */
+export function tronOfframpOrder(tx: Record<string, string | undefined> = {}) {
+  return {
+    offramp: {
+      order_id: 'order-tron',
+      tx: {
+        type: 'tron',
+        to: REGISTRY,
+        data: TRON_OFFRAMP_EXEC,
+        value: '0',
+        chain: 'tron',
+        feeLimit: '50000000',
+        ...tx,
+      },
+    },
+  }
 }

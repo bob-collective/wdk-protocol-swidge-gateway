@@ -42,6 +42,8 @@ new GatewaySwidge(account, config?)
 | `config.tronWeb`        | `object`                                | account's provider  | Tron source routes only. tronweb instance used to build the order call and read TRC-20 allowances. |
 | `config.tronProvider`   | `string`                                | —                   | Tron source routes only. Full-node URL to build a tronweb client from.                             |
 | `config.tronConfirmTimeoutMs` | `number`                          | `20000`             | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node; finite and `>= 0`. |
+| `config.maxNetworkFeeBps`  | `number \| bigint`                    | unchecked           | Refuse a `swidge()` whose network fees exceed this many bps of the input amount (see [Fee caps](#fee-caps)). |
+| `config.maxProtocolFeeBps` | `number \| bigint`                    | unchecked           | Same, for the Gateway protocol fee.                                                                |
 | `config.maxNativeFee`  | `bigint \| number \| string`           | per-chain (~$10–20) | Cap on native `value` the order tx may send beyond the swapped amount — the LayerZero/CCIP messaging fee on ERC-20 token swaps — in wei (sun on Tron). Overridable per call: `swidge(options, { maxNativeFee })`, and likewise as the second argument of `simulateSwidge()` and `getRequiredApproval()` — pass the same value to all three, or a preview or approval check can refuse an order `swidge()` would sign. |
 
 Gateway V4 requires a `refundAddress` on every route before it creates an order — create-order answers `MISSING_REFUND_ADDRESS` otherwise — and it is encoded for the **source** chain: a Bitcoin address on an onramp, the EVM `0x…` or Tron Base58Check sender on an offramp or token swap. Precedence is `options.refundAddress` → `config.refundAddress` → the account's own address (the wallet the funds leave from). It goes on the wire as-is; unlike V3's EVM-only `ownerAddress` (removed in V4), a Tron address is not converted. `swidge()`, `simulateSwidge()` and `getRequiredApproval()` refuse to create an order when none can be resolved.
@@ -57,51 +59,76 @@ Passed to `quoteSwidge()`, `swidge()`, and `getRequiredApproval()`.
 | Field             | Type     | Required | Description                                                                                                                                                                                            |
 | ----------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `fromToken`       | `string` | Yes      | Source token: pass `'BTC'` (or the exported `BTC` constant) for Bitcoin — normalised internally to the gateway's native-token zero-address. ERC-20/TRC-20 tokens are passed as their contract address. |
-| `toToken`         | `string` | Yes      | Destination token: pass `'BTC'` (or `BTC` constant) for Bitcoin, or a contract address for ERC-20/TRC-20 tokens.                                                                                       |
-| `toChain`         | `string` | Yes      | Destination chain id (e.g. `'base'`, `'bitcoin'`, `'tron'`).                                                                                                                                           |
-| `recipient`       | `string` | Yes      | Recipient address on the destination chain.                                                                                                                                                            |
-| `fromTokenAmount` | `bigint` | Yes      | Amount to send in the token's smallest unit (satoshis for BTC).                                                                                                                                        |
+| `toToken`         | `string` | Yes      | Destination token: pass `'BTC'` (or `BTC` constant) for Bitcoin — with `toChain: 'bitcoin'` (`ValueError` otherwise) — or a contract address for ERC-20/TRC-20 tokens.                             |
+| `toChain`         | `string` | No       | Destination chain id (e.g. `'base'`, `'bitcoin'`, `'tron'`). Defaults to the source chain (a same-chain swap).                                                                                         |
+| `recipient`       | `string` | Cross-chain | Recipient address on the destination chain. A same-chain swap defaults it to the account's address; a cross-chain route without one throws `ValueError` before quoting.                             |
+| `fromTokenAmount` | `bigint` | Yes      | Amount to send in the token's smallest unit (satoshis for BTC). Exact-out (`toTokenAmount`) is not supported and throws `ValueError`.                                                                  |
+| `minAmountOut`    | `bigint` | No       | Floor on the destination amount, in base units. `swidge()`/`simulateSwidge()` throw `SwidgeError` (`reason: COULD_NOT_MET_THRESHOLD`) before creating an order when the quote's `toTokenAmountMin` is below it. |
 | `refundAddress`   | `string` | No       | Source-chain refund address. Overrides `config.refundAddress` and the account-address default.                                                                                                         |
 | `slippage`        | `number` | No       | Per-call slippage override. Overrides `config.slippage`. Unset on both: the gateway resolves it per route.                                                                                             |
 
 ### Methods
 
-#### `quoteSwidge(options: SwidgeOptions) → Promise<SwidgeQuote>`
+#### `quoteSwidge(options: SwidgeOptions) → Promise<GatewaySwidgeQuote>`
 
-Returns a quote without submitting any transaction. Use to show expected output and fees before asking the user to confirm.
+Returns a quote without submitting any transaction. Use to show expected output and fees before asking the user to confirm. A WDK `SwidgeQuote` plus `affiliateApplied`:
 
-#### `swidge(options: SwidgeOptions) → Promise<SwidgeResult>`
+| Field               | Type          | Description                                                                                                         |
+| ------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `fromTokenAmount`   | `bigint`      | Input amount.                                                                                                       |
+| `toTokenAmount`     | `bigint`      | Estimated output, net of fees.                                                                                      |
+| `toTokenAmountMin`  | `bigint`      | `toTokenAmount × (1 − slippage)`, using the slippage the gateway echoes in the quote.                               |
+| `fees`              | `SwidgeFee[]` | One entry per non-zero fee, each in **its own token** (`token`, `chain`) — see below. All have `included: true`.    |
+| `estimatedDuration` | `number?`     | Seconds.                                                                                                            |
+| `priceImpact`       | `number?`     | Fraction, as the gateway reports it: negative is a loss (`-0.0045` = 0.45%). Absent without a price feed.           |
+| `affiliateApplied`  | `boolean`     | Whether the configured affiliates were sent (false on token swaps).                                                 |
+
+Fees are never summed across entries, because they are not denominated in one token: an offramp's solver fee is USDT on Ethereum while its inclusion fee is BTC sats, and an onramp's fees are in USDT whatever the input. `type` is `network` (solver, Bitcoin inclusion, destination execution, LayerZero), `protocol` or `affiliate`. Token swaps report no fee breakdown — their costs are priced into `toTokenAmount`.
+
+#### `swidge(options: SwidgeOptions, config?) → Promise<SwidgeResult>`
 
 Executes a swidge. Internally: fetches a quote, creates an order, then either hands the signed BTC transaction to the gateway's register-tx for broadcast (onramp — a register-tx failure throws; check the chain before resending, the tx may still have gone out) or broadcasts the EVM/Tron source transaction from the account (offramp/token swap — the gateway indexes it from chain; V4 has no register-tx for these).
 
+`config` takes per-call `maxNetworkFeeBps` / `maxProtocolFeeBps` (overriding the constructor's) and `paymasterToken`.
+
+Before any gateway call, `swidge()` throws `AccountRequiredError` unless the account can sign on the source chain (`signTransaction` for Bitcoin, `sendTransaction` for EVM/Tron) — a read-only account can quote, not execute. Between quote and create-order it checks that the quote is the one asked for — exactly the route's variant, the requested input amount, and (where echoed) the recipient, refund address and token pair, else `GatewaySwidgeError` `VALIDATION_ERROR` — then `minAmountOut` and the fee caps, so a refused swidge leaves no orphaned order. The binding matters because create-order posts the quote verbatim and an onramp sends the quote's `inputAmount` of BTC; the other checks only compare the quote with itself.
+
 **Returns `SwidgeResult`:**
 
-| Field             | Type     | Description                                                           |
-| ----------------- | -------- | --------------------------------------------------------------------- |
-| `id`              | `string` | Gateway order ID. Pass to `getSwidgeStatus()`.                        |
-| `hash`            | `string` | Source-chain transaction hash (EVM), bare txid (Tron), or TXID (BTC). |
-| `fees`            | `object` | Fee breakdown from the quote.                                         |
-| `fromTokenAmount` | `bigint` | Actual input amount.                                                  |
-| `toTokenAmount`   | `bigint` | Expected output amount at quoted rate.                                |
+| Field              | Type                  | Description                                                           |
+| ------------------ | --------------------- | --------------------------------------------------------------------- |
+| `id`               | `string`              | Gateway order ID. Pass to `getSwidgeStatus()`.                        |
+| `hash`             | `string`              | Source-chain transaction hash (EVM), bare txid (Tron), or TXID (BTC). |
+| `fees`             | `SwidgeFee[]`         | Fee lines from the quote (see `quoteSwidge()`).                       |
+| `transactions`     | `SwidgeTransaction[]` | The source transaction: `{ hash, chain, type: 'source' }`.            |
+| `fromTokenAmount`  | `bigint`              | Actual input amount.                                                  |
+| `toTokenAmount`    | `bigint`              | Expected output amount at quoted rate.                                |
+| `toTokenAmountMin` | `bigint`              | Minimum output after slippage.                                        |
+
+##### Fee caps
+
+`maxNetworkFeeBps` and `maxProtocolFeeBps` are basis points of the input amount. Since fees come in other tokens than the input, they are compared by the USD values the gateway attaches to each amount: `Σ fee.usd / input.usd × 10000`, in fixed-point. The gateway rounds each `usd` to the cent (a sub-cent fee reads `'0'`), so each fee line counts at `+$0.005` and the input at `−$0.005` — rounding can only make the check stricter, by up to half a cent per line. Exceeding a cap throws `MaximumFeeExceededError`. The check fails closed — with a cap set, an onramp/offramp quote without a fee breakdown, or one missing the USD value of the input or of a non-zero fee the cap covers, is refused (also `MaximumFeeExceededError`) rather than let through unchecked, and a fee under a breakdown key this module doesn't recognise is reported as `type: 'other'` and counted against both caps. A cap that isn't a finite, non-negative number throws `ValueError`. Affiliate fees are not capped. Unset caps are not checked. `simulateSwidge(options, config?)` applies the same caps.
+
+Token-swap quotes carry no fee breakdown (costs are priced into `toTokenAmount`), so the caps have nothing to check there; bound a token swap with `minAmountOut` or `slippage` instead. `minAmountOut` itself is refused (`GatewaySwidgeError` `VALIDATION_ERROR`) when the quote doesn't echo its slippage, since `toTokenAmountMin` would then be the bare estimate rather than a floor.
 
 > For offramp and token-swap routes (any route where an ERC-20 or TRC-20 is the source), call `getRequiredApproval()` and approve the token before calling `swidge()`.
 
-#### `getSwidgeStatus(id: string) → Promise<{ status: string, transactions: object[] }>`
+#### `getSwidgeStatus(id: string) → Promise<SwidgeStatusResult>`
 
 Returns the current status of an order by the `id` from `SwidgeResult`.
 
-| Field          | Type       | Description                                       |
-| -------------- | ---------- | ------------------------------------------------- |
-| `status`       | `string`   | Order lifecycle status.                           |
-| `transactions` | `object[]` | On-chain transactions associated with this order. |
+| Field          | Type                  | Description                                                                                                                                                  |
+| -------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `status`       | `string`              | `pending`, `completed`, `failed`, `refund-pending` or `refunded`.                                                                                             |
+| `transactions` | `SwidgeTransaction[]` | Every hash the order exposes, as `{ hash, chain, type }`: the `source` tx once indexed, `destination` payouts once completed, `refund` txs once refunded.   |
 
 #### `getSupportedChains() → Promise<SwidgeSupportedChain[]>`
 
-Returns all supported source and destination chains.
+Returns all supported source and destination chains, with a display `name`, VM `type` (`utxo`, `evm`, `tvm`, `svm`) and `nativeToken` symbol from a built-in chain table. A chain the table doesn't know yet gets its raw id as name and an empty `nativeToken`.
 
 #### `getSupportedTokens(options?) → Promise<SwidgeSupportedToken[]>`
 
-Returns supported tokens. Pass `options` to filter by chain or other criteria.
+Returns supported tokens with `symbol`, `decimals` and `name`. get-routes returns addresses only, so metadata comes from a table generated from the live route matrix (`pnpm gen:tokens`); a token not in it yet is **omitted** rather than returned with guessed decimals. `options.fromChain` filters by chain.
 
 #### `getRequiredApproval(options: SwidgeOptions) → Promise<{ token: string, spender: string, amount: bigint } | null>`
 
@@ -145,11 +172,26 @@ Turns a `getRequiredApproval()` result into a `TronSmartContractCall` that `Wall
 
 Affiliate fees are **not** applied on EVM↔EVM routes (dropped gracefully; `affiliateApplied: false` in the quote).
 
+These come from WDK's `SwidgeProtocol` base class, which reduces `fees` to one `bigint` (`swap()`/`quoteSwap()`: every fee; `bridge()`/`quoteBridge()`: `network` → `fee`, `protocol` → `bridgeFee`) without looking at each fee's `token`. On token-swap routes that is `0n` (no fee breakdown). On an offramp or onramp the fee lines are in different tokens, so the summed number mixes units — read `swidge()`/`quoteSwidge()`'s `fees` instead.
+
 ## `GatewayClient`
 
 Low-level HTTP client for the BOB Gateway V4 API. Instantiated automatically by `GatewaySwidge`. Expose it only when you need raw API access.
 
-## `GatewaySwidgeError` / `ERR`
+## Errors
+
+Contract violations throw the WDK error classes from `@tetherto/wdk-wallet/protocols`, so they match `instanceof` against core's copy:
+
+| Error                     | When                                                                                         |
+| ------------------------- | -------------------------------------------------------------------------------------------- |
+| `ValueError`              | `toTokenAmount` (exact-out) passed, `fromTokenAmount` or a cross-chain `recipient` missing, or a non-integer `minAmountOut`. |
+| `AccountRequiredError`    | `swidge()` with an account that cannot sign on the source chain.                             |
+| `SwidgeError`             | Quote below `minAmountOut` (`reason: 'COULD_NOT_MET_THRESHOLD'`). `swap()`/`bridge()` re-throw it as `SwapError`/`BridgeError`. |
+| `MaximumFeeExceededError` | A fee over `maxNetworkFeeBps`/`maxProtocolFeeBps`, or a capped fee that cannot be priced.    |
+
+Gateway, transport and payload-validation failures throw `GatewaySwidgeError`.
+
+### `GatewaySwidgeError` / `ERR`
 
 Typed error class and error-code constants for programmatic error handling.
 
