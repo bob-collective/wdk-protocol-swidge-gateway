@@ -148,7 +148,8 @@ function assertQuoteMatchesRequest(
 
   if (params.slippage !== undefined) {
     const bps = quoteSlippageBps(quote)
-    if (bps === null || bps > Number(params.slippage)) {
+    // Inverted so an unparseable requested bound fails closed: `bps > NaN` is false.
+    if (bps === null || !(bps <= Number(params.slippage))) {
       throw new GatewaySwidgeError(
         ERR.VALIDATION,
         `quote slippage ${inner.slippage} is looser than the requested ${params.slippage} bps`,
@@ -358,6 +359,14 @@ export class GatewaySwidge extends SwidgeProtocol {
     }
     if (options.fromTokenAmount == null) throw new ValueError('fromTokenAmount is required')
     const fromTokenAmount = baseUnits('fromTokenAmount', options.fromTokenAmount)
+    const slippage = options.slippage ?? this._slippage
+    // NaN/Infinity would go out as the literal 'NaN'/'Infinity' bps and void the slippage binding.
+    if (
+      slippage !== undefined &&
+      !(typeof slippage === 'number' && slippage >= 0 && slippage <= 1)
+    ) {
+      throw new ValueError(`slippage must be a fraction between 0 and 1, got ${slippage}`)
+    }
     const { fromChain, toChain, srcFamily, dstFamily } = this._resolveChains(options)
     // 'BTC' resolves to the zero address, which on any other chain is that chain's native gas
     // token — so a 'BTC' toToken with toChain left to default to an EVM source would swap into ETH.
@@ -420,6 +429,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   own token, price impact and estimated duration.
    * @throws {ValueError} If `toTokenAmount` is set: exact-out swidges are not supported.
    * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
+   * @throws {ValueError} If `slippage` (per call or configured) is not a number from 0 to 1.
    * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
    *   chain.
    * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
@@ -475,6 +485,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   `signTransaction` (Bitcoin) or `sendTransaction` (EVM, Tron). Thrown before any gateway call.
    * @throws {ValueError} If `toTokenAmount` is set: exact-out swidges are not supported.
    * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
+   * @throws {ValueError} If `slippage` (per call or configured) is not a number from 0 to 1.
    * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
    *   chain.
    * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
@@ -504,12 +515,15 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   than requested; or an affiliate fee the request did not include.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
    *   transaction.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the source chain is one this module cannot sign
+   *   on (`solana`). Thrown before any gateway call.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this
    *   module cannot sign (e.g. `solana`).
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for
    *   another chain family than the route's.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp's signed transaction pays the
-   *   deposit address less than the quoted amount. Thrown before register-tx: nothing is broadcast.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp's deposit address is not a bitcoin
+   *   mainnet address (thrown before signing), or its signed transaction pays that address less
+   *   than the quoted amount. Thrown before register-tx: nothing is broadcast.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if register-tx fails or reports another txid
    *   than the one signed (onramp). The transaction may still have been broadcast: check the chain
    *   or `getSwidgeStatus()` before resending.
@@ -595,6 +609,9 @@ export class GatewaySwidge extends SwidgeProtocol {
     srcFamily: string,
     checks: OrderChecks = {}
   ): Promise<{ swidgeQuote: GatewaySwidgeQuote; payload: OrderPayload }> {
+    // A source this module cannot sign on (Solana) would otherwise only fail on the order's tx
+    // type — after create-order, leaving an orphaned order on every attempt.
+    getAdapter(srcFamily)
     if (!params.refundAddress) {
       throw new GatewaySwidgeError(
         ERR.VALIDATION,
@@ -604,8 +621,10 @@ export class GatewaySwidge extends SwidgeProtocol {
     }
     const quote = (await this._client.getQuote(params)) as GatewayQuoteV4
     assertQuoteVariant(quote, variant)
-    assertQuoteMatchesRequest(quote, variant, params)
+    // Mapped before the binding checks, so every malformed amount — input included — fails the
+    // same way (GATEWAY_HTTP_ERROR), and the binding compares amounts that are known to be sane.
     const swidgeQuote = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
+    assertQuoteMatchesRequest(quote, variant, params)
     if (checks.minAmountOut !== undefined) {
       // Without the echoed slippage, toTokenAmountMin would be the bare estimate — not a floor.
       if (quoteSlippageBps(quote) === null) {
@@ -678,6 +697,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   or the fee estimate, the approval still required, and whether the transaction is valid.
    * @throws {ValueError} If `toTokenAmount` is set: exact-out swidges are not supported.
    * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
+   * @throws {ValueError} If `slippage` (per call or configured) is not a number from 0 to 1.
    * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
    *   chain.
    * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
@@ -707,11 +727,15 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   than requested; or an affiliate fee the request did not include.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
    *   transaction.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the source chain is one this module cannot sign
+   *   on (`solana`). Thrown before any gateway call.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this
    *   module cannot sign (e.g. `solana`).
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for
    *   another chain family than the route's.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if an onramp's account cannot sign transactions.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp's deposit address is not a bitcoin
+   *   mainnet address. Thrown before signing.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an approval is due and its spender is not
    *   the AllowanceHolder pinned for the source chain, or the chain has none pinned.
    */
@@ -831,6 +855,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @returns The approval to grant, or `null` when the current allowance covers `fromTokenAmount`
    *   or the route needs none (onramp, native source token).
    * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
+   * @throws {ValueError} If `slippage` (per call or configured) is not a number from 0 to 1.
    * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
    *   chain.
    * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
@@ -850,6 +875,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   than requested; or an affiliate fee the request did not include.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
    *   transaction.
+   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the source chain is one this module cannot sign
+   *   on (`solana`). Thrown before any gateway call.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this
    *   module cannot sign (e.g. `solana`).
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for

@@ -140,6 +140,22 @@ describe('swidge: onramp', () => {
     expect(registerTx).not.toHaveBeenCalled()
   })
 
+  test('refuses a deposit address that is not on bitcoin mainnet, before signing', async () => {
+    const testnet = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx'
+    createOrder.mockResolvedValue({ onramp: { order_id: 'order-onramp', address: testnet } })
+    const account = new DummyBtcAccount()
+    const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
+
+    await expect(sw.swidge(ONRAMP)).rejects.toMatchObject(
+      gatewayError(
+        ERR.VALIDATION,
+        `order deposit address ${testnet} is not a bitcoin mainnet address`
+      )
+    )
+    expect(account.signTransaction).not.toHaveBeenCalled()
+    expect(registerTx).not.toHaveBeenCalled()
+  })
+
   // register-tx IS the broadcast, and a failure can follow one that went out: never claim "not sent".
   test('a register-tx failure throws without claiming the transaction was not sent', async () => {
     registerTx.mockRejectedValue(new Error('network error'))

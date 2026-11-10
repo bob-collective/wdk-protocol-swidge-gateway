@@ -34,9 +34,24 @@ export interface BtcSimulateResult {
   paidToDeposit: bigint
 }
 
-/** Satoshis `tx` pays to `address`, summed over all of its outputs to that address. */
-function paidTo(tx: Transaction, address: string): bigint {
-  const script = btcAddress.toOutputScript(address, networks.bitcoin)
+/**
+ * The output script of an order's deposit address. This module swidges on bitcoin mainnet only,
+ * so any other address is refused — as a `GatewaySwidgeError`, before anything is signed.
+ */
+function depositScript(address: string): Buffer {
+  try {
+    return btcAddress.toOutputScript(address, networks.bitcoin)
+  } catch (err) {
+    throw new GatewaySwidgeError(
+      ERR.VALIDATION,
+      `order deposit address ${address} is not a bitcoin mainnet address`,
+      { cause: err }
+    )
+  }
+}
+
+/** Satoshis `tx` pays to `script`, summed over all of its outputs to that script. */
+function paidTo(tx: Transaction, script: Buffer): bigint {
   let paid = 0n
   for (const out of tx.outs) {
     if ((out.script as Buffer).equals(script)) paid += BigInt(out.value)
@@ -57,8 +72,8 @@ export const bitcoinAdapter = {
    * transaction has gone nowhere.
    *
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the account cannot sign transactions.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the signed transaction pays the deposit
-   *   address less than `payload.amount`.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if `payload.address` is not a bitcoin mainnet
+   *   address (before signing), or the signed transaction pays it less than `payload.amount`.
    */
   async send(
     account: BtcAccount,
@@ -68,6 +83,7 @@ export const bitcoinAdapter = {
     if (typeof account.signTransaction !== 'function') {
       throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, 'bitcoin account cannot sign transactions')
     }
+    const script = depositScript(payload.address)
     const signedTxHex = await account.signTransaction({
       to: payload.address,
       value: payload.amount,
@@ -77,7 +93,7 @@ export const bitcoinAdapter = {
     const txid = tx.getId()
     // The gateway broadcasts whatever register-tx hands it, and swidge() reports the quoted amount
     // as paid: a signer that pays short (e.g. takes the fee out of the amount) must stop here.
-    const paid = paidTo(tx, payload.address)
+    const paid = paidTo(tx, script)
     if (paid < payload.amount) {
       throw new GatewaySwidgeError(
         ERR.VALIDATION,
@@ -102,6 +118,7 @@ export const bitcoinAdapter = {
     if (typeof account.signTransaction !== 'function') {
       throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, 'bitcoin account cannot sign transactions')
     }
+    const script = depositScript(payload.address)
     const signedTxHex = await account.signTransaction({
       to: payload.address,
       value: payload.amount,
@@ -109,7 +126,7 @@ export const bitcoinAdapter = {
     })
     const parsed = Transaction.fromHex(signedTxHex)
     const txid = parsed.getId()
-    const paidToDeposit = paidTo(parsed, payload.address)
+    const paidToDeposit = paidTo(parsed, script)
     const valid = paidToDeposit >= payload.amount
     return { signedTxHex, txid, valid, paidToDeposit }
   },

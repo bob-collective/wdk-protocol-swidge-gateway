@@ -357,15 +357,21 @@ describe('quote binding', () => {
   })
 
   // Mapping the quote parses every amount in it, so a malformed one refuses before create-order.
+  // The input amount fails the same way as the others — hex included, though BigInt reads
+  // '0x5f5e100' as the requested 100000000.
   test.each([
+    ['inputAmount.amount', '1e8'],
+    ['inputAmount.amount', '0x5f5e100'],
+    ['outputAmount.amount', '1e8'],
     ['feeBreakdown.solverFee.amount', '9.95'],
     ['feeBreakdown.solverFee.amount', '0x3e3'],
     ['feeBreakdown.solverFee.amount', ''],
-    ['outputAmount.amount', '1e8'],
   ])('a quote %s of %j is refused before create-order', async (field, value) => {
     const quote = offrampQuote()
-    if (field === 'outputAmount.amount') quote.offramp.outputAmount.amount = value
-    else quote.offramp.feeBreakdown.solverFee.amount = value
+    const path = field.split('.')
+    let target = quote.offramp as unknown as Record<string, unknown>
+    for (const key of path.slice(0, -1)) target = target[key] as Record<string, unknown>
+    target[path[path.length - 1]] = value
     const { sw, account } = setup({ quote })
 
     await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
@@ -390,6 +396,24 @@ describe('slippage binding', () => {
         gatewayError(ERR.VALIDATION, 'quote slippage 50 is looser than the requested 30 bps')
       )
       expect(createOrder).not.toHaveBeenCalled()
+    }
+  )
+
+  test.each([
+    ['per call', NaN, { slippage: NaN }, {}],
+    ['per call', Infinity, { slippage: Infinity }, {}],
+    ['per call', -0.01, { slippage: -0.01 }, {}],
+    ['per call', 1.5, { slippage: 1.5 }, {}],
+    ['as the configured default', NaN, {}, { slippage: NaN }],
+  ])(
+    'a slippage set %s to %s is a ValueError before any gateway call',
+    async (_label, value, call, config) => {
+      const { sw } = setup({ config })
+
+      await expect(sw.swidge({ ...OFFRAMP, ...call })).rejects.toThrow(
+        new ValueError(`slippage must be a fraction between 0 and 1, got ${value}`)
+      )
+      expect(getQuote).not.toHaveBeenCalled()
     }
   )
 
@@ -923,4 +947,30 @@ describe('bridge()', () => {
     )
     expect(getQuote).not.toHaveBeenCalled()
   })
+})
+
+describe('unsupported source chain', () => {
+  // The gateway quotes Solana routes, but this module cannot sign there: without an up-front
+  // refusal, the order's `solana` tx type would only be rejected after create-order.
+  const FROM_SOLANA = {
+    fromChain: 'solana',
+    fromToken: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+    toToken: 'BTC',
+    toChain: 'bitcoin',
+    recipient: 'bc1qrcpt',
+    fromTokenAmount: 1_000_000n,
+  }
+
+  test.each(['swidge', 'simulateSwidge', 'getRequiredApproval'] as const)(
+    '%s refuses a Solana source before any gateway call',
+    async (method) => {
+      const { sw } = setup()
+
+      await expect(sw[method](FROM_SOLANA)).rejects.toMatchObject(
+        gatewayError(ERR.NOT_SUPPORTED, "chain family 'solana' is not supported in v1")
+      )
+      expect(getQuote).not.toHaveBeenCalled()
+      expect(createOrder).not.toHaveBeenCalled()
+    }
+  )
 })
