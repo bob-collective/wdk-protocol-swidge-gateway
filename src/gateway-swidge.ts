@@ -25,7 +25,7 @@ import { tronAdapter } from './chain-adapters/tron.js'
 import type { TronAccount, TronOpts } from './chain-adapters/tron.js'
 import type { EvmAccount, EvmRequiredApproval } from './chain-adapters/evm.js'
 import type { BtcAccount } from './chain-adapters/bitcoin.js'
-import { CHAINS, chainFamily, detectVariant } from './chains.js'
+import { chainFamily, detectVariant, sameChain } from './chains.js'
 import { isBtcAlias, toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
 import { quoteSlippageBps, toSwidgeQuote } from './map/quote.js'
@@ -38,6 +38,7 @@ import type { OrderPayload } from './map/order.js'
 import type { RegisterTxV4, SwidgeSimulation } from './types.js'
 import { GatewaySwidgeError, ERR } from './errors.js'
 import { assertAllowanceHolderSpender } from './allowance-holder.js'
+import { assertOrderPayload, uint } from './order-guard.js'
 
 const BOB_BEARER_TOKEN = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
 
@@ -72,16 +73,6 @@ function assertQuoteVariant(quote: GatewayQuoteV4, variant: Variant): void {
 }
 
 /**
- * Gateway chain ids compare case-insensitively (the gateway echoes `Base` back as `base`), and
- * two spellings of one chain in `CHAINS` (`hyperevm`/`hyperliquid`) are the same chain.
- */
-function sameChain(a: string, b: string): boolean {
-  const x = a.toLowerCase()
-  const y = b.toLowerCase()
-  return x === y || (Object.hasOwn(CHAINS, x) && CHAINS[x] === CHAINS[y])
-}
-
-/**
  * The quote must be for what was asked. create-order posts it verbatim, and an onramp signs and
  * sends the quote's `inputAmount` of BTC — so a quote for another amount, recipient, refund
  * address, token pair, chain pair, slippage or affiliate would execute that instead, while
@@ -91,8 +82,9 @@ function sameChain(a: string, b: string): boolean {
  *   `refundAddress`), case-insensitively since the gateway checksums EVM addresses.
  * - Token addresses repeat across chains (USDT0, cbBTC, the zero address), so a token is only
  *   pinned together with its chain: `inputAmount.chain`/`outputAmount.chain` must be echoed (every
- *   variant carries them), and the top-level `srcChain`/`dstChain` must match when echoed (the
- *   onramp quote has no `srcChain`, the offramp quote no `dstChain`).
+ *   variant carries them). The top-level `srcChain` must be echoed and match on every variant but
+ *   the onramp (whose quote has none), so a quote for another chain can't pass by omission;
+ *   `dstChain` must match when echoed (the offramp quote has none).
  * - A requested slippage must be echoed, and no looser: the quote's slippage sets the floor the
  *   order executes with.
  * - Only the affiliates sent with the request may be paid. The onramp/offramp quote echoes them as
@@ -137,7 +129,7 @@ function assertQuoteMatchesRequest(
 
   const chains: [field: string, got: unknown, want: string, required: boolean][] = [
     ['source chain', input?.chain, params.srcChain as string, true],
-    ['source chain', inner.srcChain, params.srcChain as string, false],
+    ['source chain', inner.srcChain, params.srcChain as string, variant !== 'onramp'],
     ['destination chain', output?.chain, params.dstChain as string, true],
     ['destination chain', inner.dstChain, params.dstChain as string, false],
   ]
@@ -192,22 +184,32 @@ function assertQuoteMatchesRequest(
   }
 }
 
-/** Checks run on the quote before create-order, so a refused swidge leaves no orphaned order. */
+/**
+ * Checks on the quote, run before create-order so a refused swidge leaves no orphaned order, and
+ * on the order tx, run before signing.
+ */
 interface OrderChecks {
   minAmountOut?: bigint
   caps?: SwidgeProtocolConfig
+  /** Cap on the order tx's native `value` beyond the swapped amount; undefined → chain default. */
+  maxNativeFee?: bigint
 }
 
-/** Parse an integer base-unit amount option, or throw `ValueError` naming it. */
+/**
+ * Parse an integer base-unit amount option — a bigint, a safe integer or a decimal string — or
+ * throw `ValueError` naming it. Decimal only, like every amount the order guard reads: `BigInt`
+ * would also take `''` (as 0), whitespace, `'0x…'` and `'+…'`, and a number above
+ * `Number.MAX_SAFE_INTEGER` may already have lost precision.
+ */
 function baseUnits(name: string, value: number | bigint | string): bigint {
-  try {
-    // BigInt('') is 0n — an empty string must not read as a zero amount.
-    const n = typeof value === 'string' && value.trim() === '' ? -1n : BigInt(value)
-    if (n >= 0n) return n
-  } catch {
-    // fall through
-  }
-  throw new ValueError(`${name} must be a non-negative integer amount in base units, got ${value}`)
+  const n = uint(value)
+  if (n !== null) return n
+  // e.g. 0.02 BNB = 2e16 wei: an integer, but not exactly representable in general.
+  const unsafe = typeof value === 'number' && Number.isInteger(value) && value > 0
+  throw new ValueError(
+    `${name} must be a non-negative integer amount in base units, got ${value}` +
+      (unsafe ? ' (above Number.MAX_SAFE_INTEGER: pass a bigint or a decimal string)' : '')
+  )
 }
 
 /** Configuration of a `GatewaySwidge` instance. */
@@ -247,7 +249,16 @@ export interface GatewaySwidgeConfig extends SwidgeProtocolConfig {
    * `swidge()` throws (default: 20,000).
    */
   tronConfirmTimeoutMs?: number
+  /**
+   * Cap on native `value` the order tx may send on top of the swapped amount — the LayerZero /
+   * CCIP messaging fee on ERC-20 token swaps — in the source chain's native base units (wei, sun),
+   * used when a call sets none (default: a per-chain cap of roughly $10–20 of the gas token).
+   */
+  maxNativeFee?: bigint | number | string
 }
+
+/** Per-call native-fee cap, overriding `GatewaySwidgeConfig.maxNativeFee`. */
+type NativeFeeConfig = Pick<GatewaySwidgeConfig, 'maxNativeFee'>
 
 /** What the chain adapters call on the account (see `GatewaySwidge#_signer`). */
 type AdapterAccount = BtcAccount & EvmAccount & TronAccount
@@ -265,6 +276,7 @@ export class GatewaySwidge extends SwidgeProtocol {
   private _fromChain: string | undefined
   private _refundAddress: string | undefined
   private _tronOpts: TronOpts
+  private _maxNativeFee: bigint | undefined
   private _spenderCache: Map<string, string>
 
   /**
@@ -275,6 +287,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @param config - The protocol configuration.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
    *   configuration sets neither `http` nor `client`.
+   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer: a bigint, a safe
+   *   integer or a decimal string.
    */
   constructor(account?: undefined, config?: GatewaySwidgeConfig)
   /**
@@ -285,6 +299,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @param config - The protocol configuration.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
    *   configuration sets neither `http` nor `client`.
+   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer: a bigint, a safe
+   *   integer or a decimal string.
    */
   constructor(account: IWalletAccountReadOnly, config?: GatewaySwidgeConfig)
   /**
@@ -295,6 +311,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @param config - The protocol configuration.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the runtime has no global `fetch` and the
    *   configuration sets neither `http` nor `client`.
+   * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer: a bigint, a safe
+   *   integer or a decimal string.
    */
   constructor(account: IWalletAccount, config?: GatewaySwidgeConfig)
   constructor(account?: IWalletAccountReadOnly | IWalletAccount, config: GatewaySwidgeConfig = {}) {
@@ -317,6 +335,8 @@ export class GatewaySwidge extends SwidgeProtocol {
       tronProvider: config.tronProvider,
       confirmTimeoutMs: config.tronConfirmTimeoutMs,
     }
+    this._maxNativeFee =
+      config.maxNativeFee == null ? undefined : baseUnits('maxNativeFee', config.maxNativeFee)
     this._spenderCache = new Map()
   }
 
@@ -478,8 +498,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * before the order is created, so a refused swidge leaves no order behind.
    *
    * @param options - The swidge options.
-   * @param config - Per-call fee caps, overriding the instance's cap by cap, and the paymaster
-   *   token an ERC-4337 account pays gas in.
+   * @param config - Per-call fee caps (overriding the instance's cap by cap), `maxNativeFee`
+   *   (overriding the instance's) and the paymaster token an ERC-4337 account pays gas in.
    * @returns The order id, the source transaction hash, the quoted amounts and the fee lines.
    * @throws {AccountRequiredError} If the account cannot sign on the source chain: it has no
    *   `signTransaction` (Bitcoin) or `sendTransaction` (EVM, Tron). Thrown before any gateway call.
@@ -508,6 +528,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {MaximumFeeExceededError} If a fee exceeds `maxNetworkFeeBps` or `maxProtocolFeeBps`.
    * @throws {MaximumFeeExceededError} If a set fee cap cannot be verified: the quote lacks the fee
    *   breakdown or a USD price the cap needs.
+   * @throws {ValueError} If `maxNativeFee` (per call or configured) is not a non-negative
+   *   integer: a bigint, a safe integer or a decimal string.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
@@ -521,6 +543,12 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   module cannot sign (e.g. `solana`).
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for
    *   another chain family than the route's.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the create-order transaction does not match
+   *   the request. EVM and Tron: not an AllowanceHolder `exec` call on the holder pinned for the
+   *   source chain, built for another chain, moving another token or more than `fromTokenAmount`,
+   *   sending more native value than `maxNativeFee` on top of the swapped amount, or (Tron) a
+   *   `feeLimit` above 100 TRX. Onramp: a BTC amount other than `fromTokenAmount`. Thrown before
+   *   signing.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp's deposit address is not a bitcoin
    *   mainnet address (thrown before signing), or its signed transaction pays that address less
    *   than the quoted amount. Thrown before register-tx: nothing is broadcast.
@@ -539,13 +567,15 @@ export class GatewaySwidge extends SwidgeProtocol {
    */
   async swidge(
     options: SwidgeOptions,
-    config: SwidgeProtocolConfig & { paymasterToken?: string } = {}
+    config: SwidgeProtocolConfig & NativeFeeConfig & { paymasterToken?: string } = {}
   ): Promise<SwidgeResult> {
     this._assertCanSign(this._resolveChains(options).srcFamily)
+    const maxNativeFee = this._resolveMaxNativeFee(config)
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     const { swidgeQuote: sq, payload } = await this._createOrder(params, variant, srcFamily, {
       minAmountOut: this._minAmountOut(options),
       caps: this._caps(config),
+      maxNativeFee,
     })
     const adapter = getAdapter(srcFamily)
 
@@ -585,10 +615,11 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /** Per-call caps override the instance's, cap by cap. */
-  private _caps(config: SwidgeProtocolConfig): SwidgeProtocolConfig {
+  private _caps(config: SwidgeProtocolConfig | null): SwidgeProtocolConfig {
+    // `null` from JS callers, as `_aaConfig` tolerates it.
     return {
-      maxNetworkFeeBps: config.maxNetworkFeeBps ?? this._config.maxNetworkFeeBps,
-      maxProtocolFeeBps: config.maxProtocolFeeBps ?? this._config.maxProtocolFeeBps,
+      maxNetworkFeeBps: config?.maxNetworkFeeBps ?? this._config.maxNetworkFeeBps,
+      maxProtocolFeeBps: config?.maxProtocolFeeBps ?? this._config.maxProtocolFeeBps,
     }
   }
 
@@ -599,9 +630,10 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /**
-   * Quote → checks → create-order → payload, with the payload's family checked against the
-   * route's. The checks — and the mapping of the quote, which parses every amount in it — run
-   * before create-order, so a refused swidge leaves no orphaned order.
+   * Quote → checks → create-order → payload. The checks — and the mapping of the quote, which
+   * parses every amount in it — run before create-order, so a refused swidge leaves no orphaned
+   * order. The payload's family is then checked against the route's, and the transaction itself
+   * against what was asked for (`assertOrderPayload`), before anything signs.
    */
   private async _createOrder(
     params: Record<string, string | undefined>,
@@ -650,7 +682,25 @@ export class GatewaySwidge extends SwidgeProtocol {
     >
     const payload = orderPayload(order, variant, quote)
     assertPayloadFamily(payload, srcFamily)
+    assertOrderPayload(payload, {
+      chain: params.srcChain as string,
+      token: params.srcToken as string,
+      // Decimal: _buildQuoteParams parsed and re-serialized it.
+      amount: BigInt(params.amount as string),
+      maxNativeFee: checks.maxNativeFee,
+    })
     return { swidgeQuote, payload }
+  }
+
+  /**
+   * The native-fee cap for one call: `config.maxNativeFee` if given, else the instance's, else
+   * undefined (→ the chain default). `swidge()`, `simulateSwidge()` and `getRequiredApproval()`
+   * all resolve it here, so an order one of them accepts the others accept too.
+   */
+  private _resolveMaxNativeFee(config: NativeFeeConfig | null): bigint | undefined {
+    // `null` from JS callers, as `_aaConfig` tolerates it.
+    const perCall = config?.maxNativeFee
+    return perCall == null ? this._maxNativeFee : baseUnits('maxNativeFee', perCall)
   }
 
   private _aaConfig(config: { paymasterToken?: string }): unknown {
@@ -692,7 +742,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    * order this creates is never funded; the gateway reconciles such orders.
    *
    * @param options - The swidge options.
-   * @param config - Per-call fee caps, as for `swidge()`.
+   * @param config - Per-call fee caps and `maxNativeFee`, as for `swidge()`.
    * @returns The dry run: the order id, the quote and, per source chain, the signed transaction
    *   or the fee estimate, the approval still required, and whether the transaction is valid.
    * @throws {ValueError} If `toTokenAmount` is set: exact-out swidges are not supported.
@@ -720,6 +770,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {MaximumFeeExceededError} If a fee exceeds `maxNetworkFeeBps` or `maxProtocolFeeBps`.
    * @throws {MaximumFeeExceededError} If a set fee cap cannot be verified: the quote lacks the fee
    *   breakdown or a USD price the cap needs.
+   * @throws {ValueError} If `maxNativeFee` (per call or configured) is not a non-negative
+   *   integer: a bigint, a safe integer or a decimal string.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
@@ -733,6 +785,12 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   module cannot sign (e.g. `solana`).
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for
    *   another chain family than the route's.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the create-order transaction does not match
+   *   the request. EVM and Tron: not an AllowanceHolder `exec` call on the holder pinned for the
+   *   source chain, built for another chain, moving another token or more than `fromTokenAmount`,
+   *   sending more native value than `maxNativeFee` on top of the swapped amount, or (Tron) a
+   *   `feeLimit` above 100 TRX. Onramp: a BTC amount other than `fromTokenAmount`. Thrown before
+   *   signing.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if an onramp's account cannot sign transactions.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp's deposit address is not a bitcoin
    *   mainnet address. Thrown before signing.
@@ -741,12 +799,14 @@ export class GatewaySwidge extends SwidgeProtocol {
    */
   async simulateSwidge(
     options: SwidgeOptions & { fromChain?: string },
-    config: SwidgeProtocolConfig = {}
+    config: SwidgeProtocolConfig & NativeFeeConfig = {}
   ): Promise<SwidgeSimulation> {
+    const maxNativeFee = this._resolveMaxNativeFee(config)
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     const { swidgeQuote: sq, payload } = await this._createOrder(params, variant, srcFamily, {
       minAmountOut: this._minAmountOut(options),
       caps: this._caps(config),
+      maxNativeFee,
     })
     const adapter = getAdapter(srcFamily)
     const common = {
@@ -852,6 +912,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    * `approve({ token, spender, amount: 0n })`, then approve `amount`.
    *
    * @param options - The swidge options; `fromToken` and `toToken` are required.
+   * @param [config] - Per-call settings; only `maxNativeFee` is read, as for `swidge()`.
    * @returns The approval to grant, or `null` when the current allowance covers `fromTokenAmount`
    *   or the route needs none (onramp, native source token).
    * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
@@ -868,6 +929,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
    *   errors are retried first), or the quote carries an input, output or fee amount that is not a
    *   plain decimal integer.
+   * @throws {ValueError} If `maxNativeFee` (per call or configured) is not a non-negative
+   *   integer: a bigint, a safe integer or a decimal string.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
@@ -881,6 +944,11 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   module cannot sign (e.g. `solana`).
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for
    *   another chain family than the route's.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the create-order transaction (fetched on a
+   *   cache miss) does not match the request: not an AllowanceHolder `exec` call on the holder
+   *   pinned for the source chain, built for another chain, moving another token or more than
+   *   `fromTokenAmount`, sending more native value than `maxNativeFee` on top of the swapped
+   *   amount, or (Tron) a `feeLimit` above 100 TRX.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an approval is due and its spender is not
    *   the AllowanceHolder pinned for the source chain, or the chain has none pinned.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if a Tron source has no tronweb instance
@@ -893,8 +961,10 @@ export class GatewaySwidge extends SwidgeProtocol {
       fromToken: string
       toToken: string
       fromTokenAmount: bigint | string | number
-    }
+    },
+    config: NativeFeeConfig = {}
   ): Promise<EvmRequiredApproval | null> {
+    const maxNativeFee = this._resolveMaxNativeFee(config)
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
     if (variant === 'onramp') return null
     const key = `${fromChain}:${variant}:${options.fromToken}:${options.toToken}:${(options.toChain as string) || ''}`
@@ -902,7 +972,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     if (this._spenderCache.has(key)) {
       spender = this._spenderCache.get(key)!
     } else {
-      const { payload } = await this._createOrder(params, variant, srcFamily)
+      const { payload } = await this._createOrder(params, variant, srcFamily, { maxNativeFee })
       if (payload.kind === 'btc')
         throw new Error('expected a contract-call payload for approval check')
       spender = payload.tx.to

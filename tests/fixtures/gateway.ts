@@ -1,4 +1,5 @@
 // Gateway V4 wire responses captured from mainnet (2026-11-09), trimmed to the fields we read.
+import { execData } from './exec.js'
 
 export const ZERO = '0x0000000000000000000000000000000000000000'
 export const USDT_BASE = '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2'
@@ -35,12 +36,21 @@ export function offrampQuote() {
   }
 }
 
+/** `AllowanceHolder.exec` calldata moving the 100 USDT of `offrampQuote`/`tokenSwapQuote`. */
+export const EXEC_100_USDT_BASE = execData({ token: USDT_BASE, amount: 100_000_000n })
+
 /** create-order for `offrampQuote`. */
 export function offrampOrder() {
   return {
     offramp: {
       order_id: 'order-offramp',
-      tx: { type: 'evm', to: ALLOWANCE_HOLDER, data: '0x2213bc0b', value: '0', chain: 'base' },
+      tx: {
+        type: 'evm',
+        to: ALLOWANCE_HOLDER,
+        data: EXEC_100_USDT_BASE,
+        value: '0',
+        chain: 'base',
+      },
     },
   }
 }
@@ -78,7 +88,13 @@ export function tokenSwapOrder() {
   return {
     tokenSwap: {
       order_id: 'order-swap',
-      tx: { type: 'evm', to: ALLOWANCE_HOLDER, data: '0x2213bc0b', value: '0', chain: 'base' },
+      tx: {
+        type: 'evm',
+        to: ALLOWANCE_HOLDER,
+        data: EXEC_100_USDT_BASE,
+        value: '0',
+        chain: 'base',
+      },
     },
   }
 }

@@ -44,6 +44,7 @@ new GatewaySwidge(account, config?)
 | `config.tronConfirmTimeoutMs` | `number`                          | `20000`             | Tron source routes only. How long a broadcast Tron transaction is given to appear on the node; finite and `>= 0`. |
 | `config.maxNetworkFeeBps`  | `number \| bigint`                    | unchecked           | Refuse a `swidge()` whose network fees exceed this many bps of the input amount (see [Fee caps](#fee-caps)). |
 | `config.maxProtocolFeeBps` | `number \| bigint`                    | unchecked           | Same, for the Gateway protocol fee.                                                                |
+| `config.maxNativeFee`  | `bigint \| number \| string`           | per-chain (~$10–20) | Cap on native `value` the order tx may send beyond the swapped amount — the LayerZero/CCIP messaging fee on ERC-20 token swaps — in wei (sun on Tron). Overridable per call: `swidge(options, { maxNativeFee })`, and likewise as the second argument of `simulateSwidge()` and `getRequiredApproval()` — pass the same value to all three, or a preview or approval check can refuse an order `swidge()` would sign. |
 
 Gateway V4 requires a `refundAddress` on every route before it creates an order — create-order answers `MISSING_REFUND_ADDRESS` otherwise — and it is encoded for the **source** chain: a Bitcoin address on an onramp, the EVM `0x…` or Tron Base58Check sender on an offramp or token swap. Precedence is `options.refundAddress` → `config.refundAddress` → the account's own address (the wallet the funds leave from). It goes on the wire as-is; unlike V3's EVM-only `ownerAddress` (removed in V4), a Tron address is not converted. `swidge()`, `simulateSwidge()` and `getRequiredApproval()` refuse to create an order when none can be resolved.
 
@@ -135,6 +136,8 @@ Computes the ERC-20/TRC-20 approval that must be granted before calling `swidge(
 
 The approval is **unbounded** (`amount` is `2^256 - 1`), as Gateway V4 and `@gobob/bob-sdk` grant it, so one approval covers later orders on the same route. Because an unbounded allowance puts the whole token balance behind the spender, the spender is checked against a hardcoded table of the Gateway's AllowanceHolder contracts per source chain (0x's canonical `0x0000000000001fF3684f28c67538d4D072C22734` on most EVM chains, Gateway's own on BOB and Tron) — never trusted from the create-order response. An unknown chain or a mismatched spender throws `VALIDATION_ERROR` instead of returning an approval; `simulateSwidge()` applies the same check to the approval it reports.
 
+The order transaction itself is held to the same standard before anything signs, in `swidge()`, `simulateSwidge()` and `getRequiredApproval()` alike: it must be `AllowanceHolder.exec(operator, token, amount, target, data)` on the pinned holder for the source chain, canonically encoded, moving the source token and at most `fromTokenAmount` of it. Native `value` beyond the swapped amount — the bridge messaging fee LayerZero OFT and CCIP token swaps pay in native — is capped by `maxNativeFee`. The quote's `srcChain` and the order's `tx.chain` must both name the requested source chain, a Tron order's `feeLimit` may not exceed 100 TRX (the gateway's own default), and amount fields must be plain decimal strings. On an onramp, the BTC amount (taken from the quote) must equal `fromTokenAmount`. A mismatch throws `VALIDATION_ERROR` (`refusing to sign the order: …`); the order already created is left to the gateway to reconcile. EVM gas is not checked: unlike Tron's `feeLimit` it is not part of the order but estimated by the account, so it is bounded by the WDK account's `transactionMaxFee` (`gasLimit × maxFeePerGas`, checked before signing) when that is set.
+
 | Return field | Type     | Description                             |
 | ------------ | -------- | --------------------------------------- |
 | `token`      | `string` | ERC-20/TRC-20 token address to approve. |
@@ -181,7 +184,7 @@ Contract violations throw the WDK error classes from `@tetherto/wdk-wallet/proto
 
 | Error                     | When                                                                                         |
 | ------------------------- | -------------------------------------------------------------------------------------------- |
-| `ValueError`              | `toTokenAmount` (exact-out) passed, `fromTokenAmount` or a cross-chain `recipient` missing, or a non-integer `minAmountOut`. |
+| `ValueError`              | `toTokenAmount` (exact-out) passed, `fromTokenAmount` or a cross-chain `recipient` missing, or a `fromTokenAmount`, `minAmountOut` or `maxNativeFee` that is not a non-negative integer (a bigint, a safe integer or a decimal string). |
 | `AccountRequiredError`    | `swidge()` with an account that cannot sign on the source chain.                             |
 | `SwidgeError`             | Quote below `minAmountOut` (`reason: 'COULD_NOT_MET_THRESHOLD'`). `swap()`/`bridge()` re-throw it as `SwapError`/`BridgeError`. |
 | `MaximumFeeExceededError` | A fee over `maxNetworkFeeBps`/`maxProtocolFeeBps`, or a capped fee that cannot be priced.    |

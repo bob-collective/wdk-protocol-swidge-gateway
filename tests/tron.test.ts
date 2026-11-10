@@ -11,11 +11,16 @@ import {
   OWNER,
   REGISTRY,
   SPENDER,
+  TRON_OFFRAMP_EXEC,
   USDT,
   buildTronTx,
   tronOfframpOrder,
   tronOfframpQuote,
 } from './fixtures/tron.js'
+import { execData } from './fixtures/exec.js'
+
+/** The order calldata as it sits in a built Tron tx's `raw_data` (no `0x`). */
+const ORDER_INPUT = TRON_OFFRAMP_EXEC.slice(2)
 
 const { tronWebCtor } = vi.hoisted(() => ({ tronWebCtor: vi.fn() }))
 vi.mock('tronweb', async (importOriginal) => ({
@@ -172,7 +177,7 @@ describe('swidge', () => {
     expect(tronWeb.transactionBuilder.triggerSmartContract).toHaveBeenCalledWith(
       REGISTRY,
       '',
-      { input: 'abcdef', callValue: 0, feeLimit: 50_000_000 },
+      { input: ORDER_INPUT, callValue: 0, feeLimit: 50_000_000 },
       [],
       OWNER
     )
@@ -200,7 +205,7 @@ describe('swidge', () => {
     expect(tronWeb.transactionBuilder.triggerSmartContract).toHaveBeenCalledWith(
       REGISTRY,
       '',
-      { input: 'abcdef', callValue: 0, feeLimit: 100_000_000 },
+      { input: ORDER_INPUT, callValue: 0, feeLimit: 100_000_000 },
       [],
       OWNER
     )
@@ -216,7 +221,7 @@ describe('swidge', () => {
     expect(override.transactionBuilder.triggerSmartContract).toHaveBeenCalledWith(
       REGISTRY,
       '',
-      { input: 'abcdef', callValue: 0, feeLimit: 50_000_000 },
+      { input: ORDER_INPUT, callValue: 0, feeLimit: 50_000_000 },
       [],
       OWNER
     )
@@ -249,9 +254,17 @@ describe('swidge', () => {
     expect(getQuote).not.toHaveBeenCalled()
   })
 
+  // The order guard refuses these before the adapter's own checks, which stay as a backstop.
   test.each([
-    [{ data: '0x' }, 'tron order tx.data is empty'],
-    [{ value: '9007199254740993' }, 'tron order tx.value exceeds the safe integer range'],
+    [
+      { data: '0x' },
+      'refusing to sign the order: order calldata is not an AllowanceHolder exec call',
+    ],
+    [
+      { value: '9007199254740993' },
+      'refusing to sign the order: order tx sends 9007199254740993 native base units on top of ' +
+        'the swap, above maxNativeFee 50000000',
+    ],
   ])('refuses an order tx with %j', async (tx, message) => {
     createOrder.mockResolvedValue(tronOfframpOrder(tx))
     const tronWeb = new DummyTronWeb()
@@ -491,7 +504,7 @@ describe('swidge: a node response that is not the requested call', () => {
     [
       'substituted calldata',
       buildTronTx({ data: 'deadbeef' }),
-      'calldata deadbeef for the order call, expected abcdef',
+      `calldata deadbeef for the order call, expected ${ORDER_INPUT}`,
     ],
     [
       'an injected call_value that would drain TRX',
@@ -676,8 +689,8 @@ describe('getRequiredApproval', () => {
     ).rejects.toMatchObject(
       gatewayError(
         ERR.VALIDATION,
-        `refusing to approve ${SPENDER} on chain "tron": expected the AllowanceHolder at ` +
-          '0x07a39ae4c49dee86e892450b20881f32cd5d500d'
+        `refusing to sign the order: order tx targets ${SPENDER}, expected the AllowanceHolder ` +
+          'at 0x07a39ae4c49dee86e892450b20881f32cd5d500d'
       )
     )
   })
@@ -703,6 +716,10 @@ describe('getRequiredApproval', () => {
     const quote = tronOfframpQuote()
     quote.offramp.inputAmount.address = native
     getQuote.mockResolvedValue(quote)
+    // A native source is exec'd as the zero-address token, its amount paid as call value.
+    createOrder.mockResolvedValue(
+      tronOfframpOrder({ data: execData({ token: ZERO, amount: 50_000_000n }), value: '50000000' })
+    )
     const tronWeb = new DummyTronWeb()
 
     const approval = await gatewaySwidge(new DummyTronAccount(tronWeb)).getRequiredApproval({
@@ -759,7 +776,7 @@ describe('getRequiredApproval', () => {
 })
 
 describe('simulateSwidge', () => {
-  const PAYLOAD_TX = { to: REGISTRY, data: '0xabcdef', value: '0', feeLimit: '50000000' }
+  const PAYLOAD_TX = { to: REGISTRY, data: TRON_OFFRAMP_EXEC, value: '0', feeLimit: '50000000' }
 
   test('quotes the fee from the built call and reports the approval, without broadcasting', async () => {
     const tronWeb = new DummyTronWeb()
@@ -846,7 +863,7 @@ describe('simulateSwidge', () => {
           transaction: buildTronTx({ data: 'deadbeef' }),
         }),
       { token: USDT, spender: REGISTRY, amount: MAX_UINT256 },
-      'tron node returned calldata deadbeef for the order call, expected abcdef',
+      `tron node returned calldata deadbeef for the order call, expected ${ORDER_INPUT}`,
     ],
   ])(
     '%s reports valid: false with the reason rather than throwing',

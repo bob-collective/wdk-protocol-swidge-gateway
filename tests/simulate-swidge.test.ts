@@ -9,6 +9,7 @@ import {
   BTC_SENDER,
   DEPOSIT_ADDRESS,
   EVM_RECIPIENT,
+  EXEC_100_USDT_BASE,
   USDT_BASE,
   USDT_ETHEREUM,
   ZERO,
@@ -23,6 +24,7 @@ import {
   UNDERPAYING_TXID,
   UNDERPAYING_TX_HEX,
 } from './fixtures/bitcoin.js'
+import { execData } from './fixtures/exec.js'
 
 const getQuote = vi.fn()
 const createOrder = vi.fn()
@@ -160,7 +162,7 @@ describe('simulateSwidge: EVM offramp', () => {
     recipient: 'bc1qrcpt',
     fromTokenAmount: 100_000_000n,
   }
-  const ORDER_TX = { to: ALLOWANCE_HOLDER, data: '0x2213bc0b', value: '0' }
+  const ORDER_TX = { to: ALLOWANCE_HOLDER, data: EXEC_100_USDT_BASE, value: '0' }
   const APPROVAL = { token: USDT_BASE, spender: ALLOWANCE_HOLDER, amount: MAX_UINT256 }
 
   /** `SwidgeQuote` for `offrampQuote()`: 133315 × (1 − 50 bps) = 132648. */
@@ -285,6 +287,10 @@ describe('simulateSwidge: EVM offramp', () => {
     quote.offramp.inputAmount.chain = 'ethereum'
     quote.offramp.inputAmount.address = USDT_ETHEREUM
     getQuote.mockResolvedValue(quote)
+    const order = offrampOrder()
+    const tx = { ...ORDER_TX, data: execData({ token: USDT_ETHEREUM, amount: 100_000_000n }) }
+    order.offramp.tx = { ...order.offramp.tx, ...tx, chain: 'ethereum' }
+    createOrder.mockResolvedValue(order)
     const account = new DummyEvmAccount()
     account.getAllowance.mockResolvedValue(100n)
     account.quoteSendTransaction!.mockResolvedValue({ fee: 21_000n })
@@ -295,7 +301,7 @@ describe('simulateSwidge: EVM offramp', () => {
     }
 
     expect(evm).toEqual({
-      tx: ORDER_TX,
+      tx,
       gasEstimate: 21_000n,
       requiredApproval: {
         token: USDT_ETHEREUM,

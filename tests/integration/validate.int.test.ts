@@ -16,6 +16,7 @@
  *   TRON_RPC_URL    — Tron full-node endpoint (default: https://tron-rpc.publicnode.com)
  *   AMOUNT_SATS     — BTC onramp amount in satoshis (default: 30000, ~$30 — fits a $50 test wallet with fee headroom)
  *   AMOUNT_USDT     — USDT offramp amount in smallest unit (default: 50000000 = 50 USDT)
+ *   AMOUNT_ETH      — native ETH offramp amount in wei (default: 2e16 = 0.02 ETH; simulated only)
  */
 
 import { describe, test, expect } from 'vitest'
@@ -38,6 +39,8 @@ const RUN = !!process.env.TEST_SEED
     const TRON_RPC = process.env.TRON_RPC_URL ?? 'https://tron-rpc.publicnode.com'
     const AMOUNT_SATS = BigInt(process.env.AMOUNT_SATS ?? '30000')
     const AMOUNT_USDT = BigInt(process.env.AMOUNT_USDT ?? '50000000')
+    // Above the gateway's native offramp minimum (~0.01 ETH); never spent, so no balance needed.
+    const AMOUNT_ETH = BigInt(process.env.AMOUNT_ETH ?? '20000000000000000')
 
     // Lazily resolved — only populated once the first test runs.
     let btcAddress: string
@@ -150,6 +153,26 @@ const RUN = !!process.env.TEST_SEED
           amount: expect.any(BigInt),
         })
       }
+    })
+
+    // A native source is wrapped in the same exec() as an ERC-20 one — zero-address token, the
+    // amount paid as `value` — which the order guard relies on. Catches the gateway changing that
+    // shape. No balance needed: the guard runs before simulate, which reports a failed estimate
+    // as `valid: false` rather than throwing.
+    test('simulateSwidge: offramp ETH@ethereum → BTC — native-source order passes the order guard', async () => {
+      const { GatewaySwidge } = await import('../../src/index.js')
+      const sw = new GatewaySwidge(evmAccount, { fromChain: 'ethereum' })
+      const sim = await sw.simulateSwidge({
+        fromToken: BTC_ZERO,
+        toToken: BTC_ZERO,
+        toChain: 'bitcoin',
+        recipient: btcAddress,
+        fromTokenAmount: AMOUNT_ETH,
+      })
+      expect(sim.broadcast).toBe(false)
+      if (!('evm' in sim)) throw new Error('expected an evm simulation')
+      expect(sim.evm.tx.value).toBe(String(AMOUNT_ETH))
+      expect(sim.evm.requiredApproval).toBeNull()
     })
 
     // ── Tron as source ───────────────────────────────────────────────────────

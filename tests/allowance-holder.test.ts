@@ -1,10 +1,13 @@
 // getRequiredApproval() on EVM source routes. Approvals are unbounded (MAX_UINT256), so the
 // spender is checked against a hardcoded per-chain AllowanceHolder table, never trusted from the
-// create-order response. Tron routes are covered in tron.test.ts.
+// create-order response. The order guard pins the order tx's `to` (the spender) to the same table
+// first, so a wrong spender trips there; the approval check stays behind it as a backstop. Tron
+// routes are covered in tron.test.ts.
 import { beforeEach, describe, test, expect, vi } from 'vitest'
 import { ERR, GatewaySwidge } from '../src/index.js'
 import type { GatewayClient } from '../src/index.js'
 import { gatewayError } from './helpers.js'
+import { execData } from './fixtures/exec.js'
 import {
   ALLOWANCE_HOLDER,
   USDT_BASE,
@@ -48,10 +51,18 @@ function quoteOn(chain: string, token = USDT_BASE) {
   return quote
 }
 
-/** An offramp create-order response whose order tx targets `to`. */
-function orderTo(to: string) {
+/** The create-order response for `quoteOn(chain, token)`, its order tx targeting `to`. */
+function orderOn(chain: string, token = USDT_BASE, to = ALLOWANCE_HOLDER) {
   const order = offrampOrder()
-  order.offramp.tx.to = to
+  const amount = BigInt(OFFRAMP.fromTokenAmount)
+  order.offramp.tx = {
+    ...order.offramp.tx,
+    to,
+    chain,
+    data: execData({ token, amount }),
+    // A native source pays its amount as value.
+    value: token === ZERO ? String(amount) : '0',
+  }
   return order
 }
 
@@ -80,7 +91,7 @@ describe('getRequiredApproval', () => {
     ['bob', SELF_DEPLOYED],
   ])('accepts the %s AllowanceHolder %s', async (chain, spender) => {
     getQuote.mockResolvedValue(quoteOn(chain))
-    createOrder.mockResolvedValue(orderTo(spender))
+    createOrder.mockResolvedValue(orderOn(chain, USDT_BASE, spender))
     const account = new DummyEvmAccount()
     account.getAllowance.mockResolvedValue(0n)
     const sw = new GatewaySwidge(account as never, { fromChain: chain, client })
@@ -96,7 +107,7 @@ describe('getRequiredApproval', () => {
     ['base', 'not-an-address', ALLOWANCE_HOLDER.toLowerCase()],
   ])('refuses %s spender %s', async (chain, spender, expected) => {
     getQuote.mockResolvedValue(quoteOn(chain))
-    createOrder.mockResolvedValue(orderTo(spender))
+    createOrder.mockResolvedValue(orderOn(chain, USDT_BASE, spender))
     const account = new DummyEvmAccount()
     account.getAllowance.mockResolvedValue(0n)
     const sw = new GatewaySwidge(account as never, { fromChain: chain, client })
@@ -104,13 +115,16 @@ describe('getRequiredApproval', () => {
     await expect(sw.getRequiredApproval(OFFRAMP)).rejects.toMatchObject(
       gatewayError(
         ERR.VALIDATION,
-        `refusing to approve ${spender} on chain "${chain}": expected the AllowanceHolder at ${expected}`
+        `refusing to sign the order: order tx targets ${spender}, expected the AllowanceHolder ` +
+          `at ${expected}`
       )
     )
+    expect(account.getAllowance).not.toHaveBeenCalled()
   })
 
   test('refuses on a chain with no known AllowanceHolder', async () => {
     getQuote.mockResolvedValue(quoteOn('sei'))
+    createOrder.mockResolvedValue(orderOn('sei'))
     const account = new DummyEvmAccount()
     account.getAllowance.mockResolvedValue(0n)
     const sw = new GatewaySwidge(account as never, { fromChain: 'sei', client })
@@ -118,23 +132,36 @@ describe('getRequiredApproval', () => {
     await expect(sw.getRequiredApproval(OFFRAMP)).rejects.toMatchObject(
       gatewayError(
         ERR.VALIDATION,
-        `refusing to approve ${ALLOWANCE_HOLDER}: no known AllowanceHolder for chain "sei" ` +
-          '(known: bob, tron, ethereum, base, bsc, arbitrum, avalanche, unichain, plasma, ' +
-          'polygon, hyperevm, hyperliquid, robinhood)'
+        'refusing to sign the order: no known AllowanceHolder for chain "sei"'
       )
     )
   })
 
-  test('returns null when the allowance already covers the order — no spender check is due', async () => {
-    createOrder.mockResolvedValue(orderTo(EVIL))
+  test('returns null when the allowance already covers the order', async () => {
     const account = new DummyEvmAccount()
     account.getAllowance.mockResolvedValue(100_000_000n)
     const sw = new GatewaySwidge(account as never, { fromChain: 'base', client })
 
     const approval = await sw.getRequiredApproval(OFFRAMP)
 
-    expect(account.getAllowance).toHaveBeenCalledWith(USDT_BASE, EVIL)
+    expect(account.getAllowance).toHaveBeenCalledWith(USDT_BASE, ALLOWANCE_HOLDER)
     expect(approval).toBe(null)
+  })
+
+  test('pins the order tx even when no approval is due', async () => {
+    createOrder.mockResolvedValue(orderOn('base', USDT_BASE, EVIL))
+    const account = new DummyEvmAccount()
+    account.getAllowance.mockResolvedValue(100_000_000n)
+    const sw = new GatewaySwidge(account as never, { fromChain: 'base', client })
+
+    await expect(sw.getRequiredApproval(OFFRAMP)).rejects.toMatchObject(
+      gatewayError(
+        ERR.VALIDATION,
+        `refusing to sign the order: order tx targets ${EVIL}, expected the AllowanceHolder at ` +
+          ALLOWANCE_HOLDER.toLowerCase()
+      )
+    )
+    expect(account.getAllowance).not.toHaveBeenCalled()
   })
 
   // USDT on Ethereum cannot move between two non-zero allowances.
@@ -145,6 +172,7 @@ describe('getRequiredApproval', () => {
     ['another token on Ethereum', 'ethereum', USDT_BASE, 100n, false],
   ])('flags resetRequired only for %s', async (_label, chain, token, allowance, reset) => {
     getQuote.mockResolvedValue(quoteOn(chain, token))
+    createOrder.mockResolvedValue(orderOn(chain, token))
     const account = new DummyEvmAccount()
     account.getAllowance.mockResolvedValue(allowance)
     const sw = new GatewaySwidge(account as never, { fromChain: chain, client })
@@ -161,6 +189,7 @@ describe('getRequiredApproval', () => {
 
   test('returns null for the native token, without an allowance read', async () => {
     getQuote.mockResolvedValue(quoteOn('base', ZERO))
+    createOrder.mockResolvedValue(orderOn('base', ZERO))
     const account = new DummyEvmAccount()
     const sw = new GatewaySwidge(account as never, { fromChain: 'base', client })
 
@@ -204,8 +233,8 @@ describe('getRequiredApproval', () => {
 })
 
 describe('simulateSwidge', () => {
-  test('refuses to report an approval to a spender that is not the AllowanceHolder', async () => {
-    createOrder.mockResolvedValue(orderTo(EVIL))
+  test('refuses an order whose spender is not the AllowanceHolder, before estimating it', async () => {
+    createOrder.mockResolvedValue(orderOn('base', USDT_BASE, EVIL))
     const account = new DummyEvmAccount()
     account.getAllowance.mockResolvedValue(0n)
     account.quoteSendTransaction.mockResolvedValue({ fee: 1n })
@@ -214,9 +243,10 @@ describe('simulateSwidge', () => {
     await expect(sw.simulateSwidge(OFFRAMP)).rejects.toMatchObject(
       gatewayError(
         ERR.VALIDATION,
-        `refusing to approve ${EVIL} on chain "base": expected the AllowanceHolder at ` +
+        `refusing to sign the order: order tx targets ${EVIL}, expected the AllowanceHolder at ` +
           ALLOWANCE_HOLDER.toLowerCase()
       )
     )
+    expect(account.quoteSendTransaction).not.toHaveBeenCalled()
   })
 })

@@ -5,7 +5,7 @@ import { run as quoteAndStatus } from '../examples/quote-and-status.js'
 import { run as offrampTron } from '../examples/offramp-usdt-tron-to-btc.js'
 import { EXAMPLE_TXID, EXAMPLE_TX_HEX } from './fixtures/bitcoin.js'
 import { DEPOSIT_ADDRESS } from './fixtures/gateway.js'
-import { OWNER, REGISTRY, USDT, buildTronTx } from './fixtures/tron.js'
+import { OWNER, REGISTRY, TRON_EXEC, TRON_EXEC_HEX, USDT, buildTronTx } from './fixtures/tron.js'
 
 const request = vi.fn()
 const http = { request }
@@ -80,7 +80,7 @@ describe('BTC examples', () => {
 })
 
 describe('Tron offramp example', () => {
-  const ORDER_TX = buildTronTx({ data: 'feed', feeLimit: 100_000_000 })
+  const ORDER_TX = buildTronTx({ data: TRON_EXEC_HEX, feeLimit: 100_000_000 })
 
   /** Logs what the example does, in order. The allowance appears only once approve() is sent. */
   class DummyTronAccount {
@@ -145,7 +145,14 @@ describe('Tron offramp example', () => {
         body: {
           offramp: {
             order_id: 'tron-1',
-            tx: { type: 'tron', to: REGISTRY, data: '0xfeed', value: '0', feeLimit: '100000000' },
+            tx: {
+              type: 'tron',
+              to: REGISTRY,
+              data: TRON_EXEC,
+              value: '0',
+              chain: 'tron',
+              feeLimit: '100000000',
+            },
           },
         },
       }

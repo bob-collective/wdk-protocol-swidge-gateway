@@ -2,6 +2,7 @@
 // so these builders derive the latter two with tronweb's own serializer — no stub objects.
 import { utils } from 'tronweb'
 import { USDT_ETHEREUM, ZERO } from './gateway.js'
+import { execData } from './exec.js'
 
 // Real mainnet addresses — `toHex` rejects made-up Base58, and the adapter converts.
 export const OWNER = 'TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR'
@@ -9,6 +10,13 @@ export const OWNER = 'TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR'
 export const REGISTRY = 'TAfbit1ENsRmtZbPQfYU3srURpfYuWYS7K'
 export const USDT = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
 export const SPENDER = 'TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7'
+
+/** exec calldata moving 1 USDT (Tron). */
+export const TRON_EXEC = execData({ token: USDT, amount: 1_000_000n })
+/** Same, without `0x`, as it sits in a built Tron tx's `raw_data`. */
+export const TRON_EXEC_HEX = TRON_EXEC.slice(2)
+/** exec calldata moving `tronOfframpQuote`'s 50 USDT: the order call `buildTronTx()` builds by default. */
+export const TRON_OFFRAMP_EXEC = execData({ token: USDT, amount: 50_000_000n })
 
 const TIMESTAMP = Date.now()
 
@@ -35,7 +43,7 @@ export function buildTronTx(overrides: TronTxOverrides = {}) {
   const {
     owner = OWNER,
     to = REGISTRY,
-    data = 'abcdef',
+    data = TRON_OFFRAMP_EXEC.slice(2),
     callValue = 0,
     feeLimit = 50_000_000,
     timestamp = TIMESTAMP,
@@ -111,7 +119,7 @@ export function tronOfframpQuote() {
 
 /**
  * create-order for `tronOfframpQuote`: a `tron`-tagged `GatewayTxData` for the call `buildTronTx()`
- * builds by default (calldata `abcdef`, 50 TRX fee limit).
+ * builds by default (`TRON_OFFRAMP_EXEC`, 50 TRX fee limit).
  */
 export function tronOfframpOrder(tx: Record<string, string | undefined> = {}) {
   return {
@@ -120,7 +128,7 @@ export function tronOfframpOrder(tx: Record<string, string | undefined> = {}) {
       tx: {
         type: 'tron',
         to: REGISTRY,
-        data: '0xabcdef',
+        data: TRON_OFFRAMP_EXEC,
         value: '0',
         chain: 'tron',
         feeLimit: '50000000',

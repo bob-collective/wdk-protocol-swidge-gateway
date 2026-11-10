@@ -10,6 +10,7 @@ import {
   BTC_SENDER,
   DEPOSIT_ADDRESS,
   EVM_RECIPIENT,
+  EXEC_100_USDT_BASE,
   USDT_BASE,
   USDT_ETHEREUM,
   ZERO,
@@ -220,7 +221,7 @@ describe('swidge: EVM source', () => {
     recipient: 'bc1qrcpt',
     fromTokenAmount: 100_000_000n,
   }
-  const ORDER_TX = { to: ALLOWANCE_HOLDER, data: '0x2213bc0b', value: '0' }
+  const ORDER_TX = { to: ALLOWANCE_HOLDER, data: EXEC_100_USDT_BASE, value: '0' }
 
   class DummyEvmAccount {
     isErc4337 = false

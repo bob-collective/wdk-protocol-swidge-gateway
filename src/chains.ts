@@ -91,6 +91,17 @@ const FAMILY_TYPE: Record<ChainFamily, ChainInfo['type']> = {
 }
 
 /**
+ * Whether two Gateway chain ids name the same chain. Ids compare case-insensitively (the gateway
+ * echoes `Base` back as `base`), and two spellings of one chain in `CHAINS`
+ * (`hyperevm`/`hyperliquid`) are the same chain.
+ */
+export function sameChain(a: string, b: string): boolean {
+  const x = a.toLowerCase()
+  const y = b.toLowerCase()
+  return x === y || (Object.hasOwn(CHAINS, x) && CHAINS[x] === CHAINS[y])
+}
+
+/**
  * Metadata for a Gateway chain id. Unknown chains fall back to the raw id as the name and the
  * family's VM type; `nativeToken` is left empty rather than guessed.
  *
