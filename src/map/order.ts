@@ -1,4 +1,5 @@
 import { GatewaySwidgeError, ERR } from '../errors.js'
+import { parseBaseUnits } from '../order-guard.js'
 import type { SwidgeVariant } from '../chains.js'
 
 export interface BtcOrderPayload {
@@ -81,7 +82,8 @@ export function orderPayload(
       orderId: o.order_id,
       kind: 'btc',
       address: o.address,
-      amount: BigInt(quote!.onramp!.inputAmount.amount),
+      // Decimal only, like every other amount the order guard reads.
+      amount: parseBaseUnits('quote onramp.inputAmount.amount', quote!.onramp!.inputAmount.amount),
     }
   }
   const tx = o.tx

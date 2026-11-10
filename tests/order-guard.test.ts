@@ -5,7 +5,8 @@ import { Transaction } from 'bitcoinjs-lib'
 import { GatewaySwidge } from '../src/gateway-swidge.js'
 import type { GatewaySwidgeConfig } from '../src/gateway-swidge.js'
 import type { GatewayClient } from '../src/gateway-client.js'
-import { EXEC_SELECTOR } from '../src/order-guard.js'
+import { EXEC_SELECTOR, assertOrderPayload } from '../src/order-guard.js'
+import { orderPayload } from '../src/map/order.js'
 import { CANONICAL_HOLDER, EVM_TOKEN, ROUTER, execData } from './fixtures/exec.js'
 import { REGISTRY as TRON_HOLDER, USDT as USDT_TRON } from './fixtures/tron.js'
 
@@ -278,6 +279,16 @@ describe('native value', () => {
     expect(() => setup(order(), { maxNativeFee: 1.5 })).toThrow(/maxNativeFee must be/)
     expect(() => setup(order(), { maxNativeFee: '0x10' })).toThrow(/maxNativeFee must be/)
   })
+
+  test('a maxNativeFee number above MAX_SAFE_INTEGER points at bigint/string', () => {
+    // 0.02 BNB — the bsc default — as a number.
+    expect(() => setup(order(), { maxNativeFee: 2e16 })).toThrow(
+      'maxNativeFee must be a non-negative integer in base units, got 20000000000000000 ' +
+        '(above Number.MAX_SAFE_INTEGER: pass a bigint or a decimal string)'
+    )
+    expect(() => setup(order(), { maxNativeFee: 2n * 10n ** 16n })).not.toThrow()
+    expect(() => setup(order(), { maxNativeFee: '20000000000000000' })).not.toThrow()
+  })
 })
 
 describe('Tron order tx', () => {
@@ -295,6 +306,15 @@ describe('Tron order tx', () => {
   }
 
   test('the Tron AllowanceHolder and a Base58 source token are compared as addresses', async () => {
+    // Base58 holder vs the table's 0x form, Base58 token vs exec's hex word: both match.
+    const ctx = { chain: 'tron', token: USDT_TRON, amount: AMOUNT }
+    const payload = (tx: ReturnType<typeof tron>) =>
+      orderPayload({ offramp: { order_id: 'o', tx } }, 'offramp')
+    expect(() => assertOrderPayload(payload(tron()), ctx)).not.toThrow()
+    expect(() => assertOrderPayload(payload(tron()), { ...ctx, token: EVM_TOKEN })).toThrow(
+      /order moves token .*, but the swidge is from/
+    )
+
     const { sw, account } = setup(tron({ to: 'TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax' }), {}, 'tron')
     await expect(sw.swidge(route(USDT_TRON))).rejects.toThrow(
       'order tx targets TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax, expected the AllowanceHolder at ' +
@@ -317,9 +337,9 @@ describe('Tron order tx', () => {
 })
 
 describe('onramp', () => {
-  test('a quote asking for more BTC than fromTokenAmount is refused before signing', async () => {
+  function onramp(quoteAmount: string) {
     const client = {
-      getQuote: vi.fn(async () => ({ onramp: { inputAmount: { amount: '100001' } } })),
+      getQuote: vi.fn(async () => ({ onramp: { inputAmount: { amount: quoteAmount } } })),
       createOrder: vi.fn(async () => ({ onramp: { order_id: 'o', address: 'bc1qdeposit' } })),
       registerTx: vi.fn(),
     }
@@ -328,7 +348,7 @@ describe('onramp', () => {
       { getAddress: async () => 'bc1qsender', signTransaction },
       { fromChain: 'bitcoin', client: client as unknown as GatewayClient }
     )
-    await expect(
+    const swidge = () =>
       sw.swidge({
         fromToken: 'BTC',
         toToken: EVM_TOKEN,
@@ -336,10 +356,26 @@ describe('onramp', () => {
         recipient: '0xrcpt',
         fromTokenAmount: 100_000n,
       })
-    ).rejects.toThrow(
+    return { swidge, client, signTransaction }
+  }
+
+  test('a quote asking for more BTC than fromTokenAmount is refused before signing', async () => {
+    const { swidge, client, signTransaction } = onramp('100001')
+    await expect(swidge()).rejects.toThrow(
       'refusing to sign the order: the quote asks for 100001 sats, but fromTokenAmount is 100000'
     )
     expect(signTransaction).not.toHaveBeenCalled()
     expect(client.registerTx).not.toHaveBeenCalled()
   })
+
+  test.each([['0x186a0'], [''], [' 100000']])(
+    'a quote amount of %j is refused, not reinterpreted',
+    async (amount) => {
+      const { swidge, signTransaction } = onramp(amount)
+      await expect(swidge()).rejects.toThrow(
+        /quote onramp.inputAmount.amount must be a non-negative integer/
+      )
+      expect(signTransaction).not.toHaveBeenCalled()
+    }
+  )
 })

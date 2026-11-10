@@ -95,7 +95,9 @@ describe('GatewaySwidge unbounded approvals', () => {
     await expect(sw.getRequiredApproval(route)).rejects.toThrow(/order tx targets 0xother/)
   })
 
-  test('simulateSwidge refuses to report an approval for a non-AllowanceHolder spender', async () => {
+  // The order guard pins `tx.to` (the spender) first, so this trips there, before the
+  // post-simulate spender check — which stays as a backstop.
+  test('simulateSwidge refuses an order whose spender is not the AllowanceHolder', async () => {
     const account = {
       getAddress: async () => '0xsender',
       getAllowance: vi.fn(async () => 0n),

@@ -83,9 +83,12 @@ function uint(value: unknown): bigint | null {
 export function parseBaseUnits(field: string, value: unknown): bigint {
   const n = uint(value)
   if (n === null) {
+    // e.g. 0.02 BNB = 2e16 wei: an integer, but not exactly representable in general.
+    const unsafe = typeof value === 'number' && Number.isInteger(value) && value > 0
     throw new GatewaySwidgeError(
       ERR.VALIDATION,
-      `${field} must be a non-negative integer in base units, got ${String(value)}`
+      `${field} must be a non-negative integer in base units, got ${String(value)}` +
+        (unsafe ? ' (above Number.MAX_SAFE_INTEGER: pass a bigint or a decimal string)' : '')
     )
   }
   return n
@@ -211,6 +214,11 @@ function assertContractCall(
  * The order must also be for the requested source chain, and a Tron order's `feeLimit` may not
  * exceed `MAX_TRON_FEE_LIMIT_SUN`. Every amount field must be plain decimal digits, so the value
  * checked here is the value the signer reads.
+ *
+ * EVM gas is not capped here. Unlike Tron's `feeLimit` it is not part of the order: the account
+ * estimates it, so a hostile inner call can only make the tx expensive, not set its ceiling. The
+ * WDK account's own `transactionMaxFee` bounds that (`gasLimit × maxFeePerGas`, checked before
+ * signing), for every transaction it sends.
  *
  * The GatewayRouter (`exec`'s operator and target) is deliberately not pinned. It forwards the
  * pulled tokens to an arbitrary inner call (registry, OFT, aggregator…), so a hostile order could
