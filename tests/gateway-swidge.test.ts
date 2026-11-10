@@ -18,7 +18,12 @@ import {
   onrampOrder,
   onrampQuote,
 } from './fixtures/gateway.js'
-import { SIGNED_TXID, SIGNED_TX_HEX } from './fixtures/bitcoin.js'
+import {
+  SIGNED_TXID,
+  SIGNED_TX_HEX,
+  UNDERPAYING_TXID,
+  UNDERPAYING_TX_HEX,
+} from './fixtures/bitcoin.js'
 import { BTC_RECIPIENT, OWNER, USDT, tronOfframpQuote } from './fixtures/tron.js'
 
 const getQuote = vi.fn()
@@ -117,6 +122,22 @@ describe('swidge: onramp', () => {
       value: 50_000n,
       feeRate: 12,
     })
+  })
+
+  // The gateway broadcasts whatever register-tx hands it, so a short payment must stop before it.
+  test('refuses a signed transaction that pays the deposit address less than the quote', async () => {
+    const account = new DummyBtcAccount()
+    account.signTransaction.mockResolvedValue(UNDERPAYING_TX_HEX)
+    const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
+
+    await expect(sw.swidge(ONRAMP)).rejects.toMatchObject(
+      gatewayError(
+        ERR.VALIDATION,
+        `signed transaction ${UNDERPAYING_TXID} pays the deposit address ${DEPOSIT_ADDRESS} ` +
+          "49999 sats, less than the order's 50000; it was not sent to the gateway"
+      )
+    )
+    expect(registerTx).not.toHaveBeenCalled()
   })
 
   // register-tx IS the broadcast, and a failure can follow one that went out: never claim "not sent".

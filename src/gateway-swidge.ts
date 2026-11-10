@@ -430,7 +430,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   or offramp: more than 5 entries, a missing or duplicate address, a non-positive `bps`, or
    *   more than 1000 bps in total.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
-   *   errors are retried first).
+   *   errors are retried first), or the quote carries an input, output or fee amount that is not a
+   *   plain decimal integer.
    */
   async quoteSwidge(options: SwidgeOptions): Promise<GatewaySwidgeQuote> {
     const { params, affiliateApplied } = await this._buildQuoteParams(options)
@@ -484,7 +485,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   or offramp: more than 5 entries, a missing or duplicate address, a non-positive `bps`, or
    *   more than 1000 bps in total.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
-   *   errors are retried first).
+   *   errors are retried first), or the quote carries an input, output or fee amount that is not a
+   *   plain decimal integer.
    * @throws {ValueError} If `minAmountOut` is not a non-negative integer.
    * @throws {ValueError} If `maxNetworkFeeBps` or `maxProtocolFeeBps` is not a finite,
    *   non-negative number.
@@ -506,6 +508,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   module cannot sign (e.g. `solana`).
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for
    *   another chain family than the route's.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp's signed transaction pays the
+   *   deposit address less than the quoted amount. Thrown before register-tx: nothing is broadcast.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if register-tx fails or reports another txid
    *   than the one signed (onramp). The transaction may still have been broadcast: check the chain
    *   or `getSwidgeStatus()` before resending.
@@ -525,12 +529,10 @@ export class GatewaySwidge extends SwidgeProtocol {
   ): Promise<SwidgeResult> {
     this._assertCanSign(this._resolveChains(options).srcFamily)
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
-    const { quote, payload } = await this._createOrder(params, variant, srcFamily, {
+    const { swidgeQuote: sq, payload } = await this._createOrder(params, variant, srcFamily, {
       minAmountOut: this._minAmountOut(options),
       caps: this._caps(config),
     })
-    // Map the result before broadcasting: a malformed quote must throw while failing is free.
-    const sq = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
     const adapter = getAdapter(srcFamily)
 
     let txid: string
@@ -584,14 +586,15 @@ export class GatewaySwidge extends SwidgeProtocol {
 
   /**
    * Quote → checks → create-order → payload, with the payload's family checked against the
-   * route's. The checks run before create-order, so a refused swidge leaves no orphaned order.
+   * route's. The checks — and the mapping of the quote, which parses every amount in it — run
+   * before create-order, so a refused swidge leaves no orphaned order.
    */
   private async _createOrder(
     params: Record<string, string | undefined>,
     variant: 'onramp' | 'offramp' | 'tokenSwap',
     srcFamily: string,
     checks: OrderChecks = {}
-  ): Promise<{ quote: GatewayQuoteV4; payload: OrderPayload }> {
+  ): Promise<{ swidgeQuote: GatewaySwidgeQuote; payload: OrderPayload }> {
     if (!params.refundAddress) {
       throw new GatewaySwidgeError(
         ERR.VALIDATION,
@@ -602,6 +605,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     const quote = (await this._client.getQuote(params)) as GatewayQuoteV4
     assertQuoteVariant(quote, variant)
     assertQuoteMatchesRequest(quote, variant, params)
+    const swidgeQuote = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
     if (checks.minAmountOut !== undefined) {
       // Without the echoed slippage, toTokenAmountMin would be the bare estimate — not a floor.
       if (quoteSlippageBps(quote) === null) {
@@ -611,7 +615,7 @@ export class GatewaySwidge extends SwidgeProtocol {
           { cause: quote }
         )
       }
-      const { toTokenAmountMin } = toSwidgeQuote(quote, { affiliateApplied: false })
+      const { toTokenAmountMin } = swidgeQuote
       if (toTokenAmountMin < checks.minAmountOut) {
         throw new SwidgeError(
           `quote guarantees at least ${toTokenAmountMin} of the destination token after slippage, ` +
@@ -627,7 +631,7 @@ export class GatewaySwidge extends SwidgeProtocol {
     >
     const payload = orderPayload(order, variant, quote)
     assertPayloadFamily(payload, srcFamily)
-    return { quote, payload }
+    return { swidgeQuote, payload }
   }
 
   private _aaConfig(config: { paymasterToken?: string }): unknown {
@@ -684,7 +688,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   or offramp: more than 5 entries, a missing or duplicate address, a non-positive `bps`, or
    *   more than 1000 bps in total.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
-   *   errors are retried first).
+   *   errors are retried first), or the quote carries an input, output or fee amount that is not a
+   *   plain decimal integer.
    * @throws {ValueError} If `minAmountOut` is not a non-negative integer.
    * @throws {ValueError} If `maxNetworkFeeBps` or `maxProtocolFeeBps` is not a finite,
    *   non-negative number.
@@ -715,12 +720,11 @@ export class GatewaySwidge extends SwidgeProtocol {
     config: SwidgeProtocolConfig = {}
   ): Promise<SwidgeSimulation> {
     const { params, variant, srcFamily, fromChain } = await this._buildQuoteParams(options)
-    const { quote, payload } = await this._createOrder(params, variant, srcFamily, {
+    const { swidgeQuote: sq, payload } = await this._createOrder(params, variant, srcFamily, {
       minAmountOut: this._minAmountOut(options),
       caps: this._caps(config),
     })
     const adapter = getAdapter(srcFamily)
-    const sq = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
     const common = {
       variant,
       orderId: payload.orderId,
@@ -837,7 +841,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   more than 5 entries, a missing or duplicate address, a non-positive `bps`, or more than
    *   1000 bps in total.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
-   *   errors are retried first).
+   *   errors are retried first), or the quote carries an input, output or fee amount that is not a
+   *   plain decimal integer.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another

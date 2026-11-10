@@ -356,14 +356,22 @@ describe('quote binding', () => {
     expect(createOrder).not.toHaveBeenCalled()
   })
 
-  test('a malformed fee amount throws before anything is broadcast', async () => {
+  // Mapping the quote parses every amount in it, so a malformed one refuses before create-order.
+  test.each([
+    ['feeBreakdown.solverFee.amount', '9.95'],
+    ['feeBreakdown.solverFee.amount', '0x3e3'],
+    ['feeBreakdown.solverFee.amount', ''],
+    ['outputAmount.amount', '1e8'],
+  ])('a quote %s of %j is refused before create-order', async (field, value) => {
     const quote = offrampQuote()
-    quote.offramp.feeBreakdown.solverFee.amount = '9.95'
+    if (field === 'outputAmount.amount') quote.offramp.outputAmount.amount = value
+    else quote.offramp.feeBreakdown.solverFee.amount = value
     const { sw, account } = setup({ quote })
 
-    await expect(sw.swidge(OFFRAMP)).rejects.toThrow(
-      new SyntaxError('Cannot convert 9.95 to a BigInt')
+    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
+      gatewayError(ERR.HTTP, `quote ${field} is not an integer amount in base units: ${value}`)
     )
+    expect(createOrder).not.toHaveBeenCalled()
     expect(account.sendTransaction).not.toHaveBeenCalled()
   })
 })

@@ -3,7 +3,7 @@ import { beforeEach, describe, test, expect, vi } from 'vitest'
 import { run as onrampBase } from '../examples/onramp-btc-to-usdt-base.js'
 import { run as quoteAndStatus } from '../examples/quote-and-status.js'
 import { run as offrampTron } from '../examples/offramp-usdt-tron-to-btc.js'
-import { SIGNED_TXID, SIGNED_TX_HEX } from './fixtures/bitcoin.js'
+import { EXAMPLE_TXID, EXAMPLE_TX_HEX } from './fixtures/bitcoin.js'
 import { DEPOSIT_ADDRESS } from './fixtures/gateway.js'
 import { OWNER, REGISTRY, USDT, buildTronTx } from './fixtures/tron.js'
 
@@ -22,7 +22,7 @@ describe('BTC examples', () => {
       return 'bc1qsender'
     }
     async signTransaction() {
-      return SIGNED_TX_HEX
+      return EXAMPLE_TX_HEX
     }
   }
 
@@ -43,7 +43,7 @@ describe('BTC examples', () => {
         return { status: 200, body: { onramp: { order_id: 'o1', address: DEPOSIT_ADDRESS } } }
       }
       if (url.endsWith('/v4/register-tx')) {
-        return { status: 200, body: { onramp: { txid: SIGNED_TXID } } }
+        return { status: 200, body: { onramp: { txid: EXAMPLE_TXID } } }
       }
       return { status: 200, body: { status: { success: { received_tokens: [] } } } }
     })
@@ -54,9 +54,9 @@ describe('BTC examples', () => {
 
     expect(result).toEqual({
       id: 'o1',
-      hash: SIGNED_TXID,
+      hash: EXAMPLE_TXID,
       fees: [],
-      transactions: [{ hash: SIGNED_TXID, chain: 'bitcoin', type: 'source' }],
+      transactions: [{ hash: EXAMPLE_TXID, chain: 'bitcoin', type: 'source' }],
       fromTokenAmount: 100_000n,
       toTokenAmount: 99_000n,
       toTokenAmountMin: 99_000n,
