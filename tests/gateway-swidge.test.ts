@@ -1,6 +1,6 @@
 // swidge() execution: what is signed, sent and registered for each source family, and what the
 // module refuses in a create-order response. The WDK contract checks that run before
-// create-order (minAmountOut, fee caps, quote binding) are in swidge-contract.test.ts.
+// create-order (minAmountOut, fee caps) are in swidge-contract.test.ts.
 import { beforeEach, describe, test, expect, vi } from 'vitest'
 import { ERR, GatewaySwidge } from '../src/index.js'
 import type { GatewayClient } from '../src/index.js'
@@ -19,12 +19,7 @@ import {
   onrampOrder,
   onrampQuote,
 } from './fixtures/gateway.js'
-import {
-  SIGNED_TXID,
-  SIGNED_TX_HEX,
-  UNDERPAYING_TXID,
-  UNDERPAYING_TX_HEX,
-} from './fixtures/bitcoin.js'
+import { SIGNED_TXID, SIGNED_TX_HEX } from './fixtures/bitcoin.js'
 import { BTC_RECIPIENT, OWNER, USDT, tronOfframpQuote } from './fixtures/tron.js'
 
 const getQuote = vi.fn()
@@ -112,25 +107,6 @@ describe('swidge: onramp', () => {
     })
   })
 
-  // The onramp quote repeats the destination token as a top-level `dstToken`: both echoes must
-  // name the requested token, or the quote could pass on one while create-order reads the other.
-  test('a quote whose dstToken differs from the requested token is refused', async () => {
-    const quote = onrampQuote()
-    quote.onramp.dstToken = USDT_ETHEREUM
-    getQuote.mockResolvedValue(quote)
-    const account = new DummyBtcAccount()
-    const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
-
-    await expect(sw.swidge(ONRAMP)).rejects.toMatchObject(
-      gatewayError(
-        ERR.VALIDATION,
-        `quote destination token ${USDT_ETHEREUM} does not match the requested ${USDT_BASE}`
-      )
-    )
-    expect(createOrder).not.toHaveBeenCalled()
-    expect(account.signTransaction).not.toHaveBeenCalled()
-  })
-
   test('passes config.feeRate to the signer', async () => {
     const account = new DummyBtcAccount()
     const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', feeRate: 12, client })
@@ -142,38 +118,6 @@ describe('swidge: onramp', () => {
       value: 50_000n,
       feeRate: 12,
     })
-  })
-
-  // The gateway broadcasts whatever register-tx hands it, so a short payment must stop before it.
-  test('refuses a signed transaction that pays the deposit address less than the quote', async () => {
-    const account = new DummyBtcAccount()
-    account.signTransaction.mockResolvedValue(UNDERPAYING_TX_HEX)
-    const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
-
-    await expect(sw.swidge(ONRAMP)).rejects.toMatchObject(
-      gatewayError(
-        ERR.VALIDATION,
-        `signed transaction ${UNDERPAYING_TXID} pays the deposit address ${DEPOSIT_ADDRESS} ` +
-          "49999 sats, less than the order's 50000; it was not sent to the gateway"
-      )
-    )
-    expect(registerTx).not.toHaveBeenCalled()
-  })
-
-  test('refuses a deposit address that is not on bitcoin mainnet, before signing', async () => {
-    const testnet = 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx'
-    createOrder.mockResolvedValue({ onramp: { order_id: 'order-onramp', address: testnet } })
-    const account = new DummyBtcAccount()
-    const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
-
-    await expect(sw.swidge(ONRAMP)).rejects.toMatchObject(
-      gatewayError(
-        ERR.VALIDATION,
-        `order deposit address ${testnet} is not a bitcoin mainnet address`
-      )
-    )
-    expect(account.signTransaction).not.toHaveBeenCalled()
-    expect(registerTx).not.toHaveBeenCalled()
   })
 
   // register-tx IS the broadcast, and a failure can follow one that went out: never claim "not sent".

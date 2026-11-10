@@ -1,5 +1,4 @@
 import type { SwidgeFee, SwidgeFeeType, SwidgeQuote } from '@tetherto/wdk-wallet/protocols'
-import { GatewaySwidgeError, ERR } from '../errors.js'
 
 // Raw wire shapes (loose typing — gateway API response). All camelCase on the wire.
 
@@ -57,20 +56,6 @@ const FEE_KEYS: [key: string, type: SwidgeFeeType, description: string][] = [
 
 const BPS = 10_000n
 
-/**
- * A quote amount in base units. Anything but a plain decimal integer string is refused as a
- * `GatewaySwidgeError` (`GATEWAY_HTTP_ERROR`): `BigInt` alone would read `''` as 0 and also take
- * hex or padded strings, and it throws a bare `SyntaxError` on the rest.
- */
-function wireAmount(field: string, value: unknown, gw: GatewayQuoteV4): bigint {
-  if (typeof value === 'string' && /^\d+$/.test(value)) return BigInt(value)
-  throw new GatewaySwidgeError(
-    ERR.HTTP,
-    `quote ${field} is not an integer amount in base units: ${value}`,
-    { cause: gw }
-  )
-}
-
 /** The inner quote of a `GatewayQuoteV4` — whichever variant key is present. */
 export function innerQuote(gw: GatewayQuoteV4): InnerQuote {
   return gw.onramp || gw.offramp || gw.tokenSwap || (gw as unknown as InnerQuote)
@@ -81,8 +66,6 @@ export function innerQuote(gw: GatewayQuoteV4): InnerQuote {
  * denominated in its own token (an offramp's solver fee is USDT, its inclusion fee is BTC sats).
  * An amount entry under a key not in `FEE_KEYS` becomes an `other` line named after its key, so
  * a fee the gateway adds later still shows up — and still counts against the network cap.
- *
- * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a fee amount is not a plain decimal integer.
  */
 export function feeLines(gw: GatewayQuoteV4): FeeLine[] {
   const fb = innerQuote(gw).feeBreakdown || {}
@@ -99,7 +82,7 @@ export function feeLines(gw: GatewayQuoteV4): FeeLine[] {
     if (!entry || typeof entry !== 'object') continue
     const fee = entry as WireTokenAmount
     if (fee.amount == null) continue
-    const amount = wireAmount(`feeBreakdown.${key}.amount`, fee.amount, gw)
+    const amount = BigInt(fee.amount)
     if (amount === 0n) continue
     lines.push({
       type,
@@ -148,18 +131,16 @@ function minOutput(output: bigint, bps: number | null): bigint {
  * @param gatewayQuote - get-quote response.
  * @param ctx - Whether affiliates were sent with the quote request.
  * @returns The mapped quote.
- * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if an input, output or fee amount is not a
- *   plain decimal integer.
  */
 export function toSwidgeQuote(
   gatewayQuote: GatewayQuoteV4,
   ctx: { affiliateApplied: boolean }
 ): GatewaySwidgeQuote {
   const q = innerQuote(gatewayQuote)
-  const toTokenAmount = wireAmount('outputAmount.amount', q.outputAmount?.amount, gatewayQuote)
+  const toTokenAmount = BigInt(q.outputAmount.amount)
   const priceImpact = q.priceImpact == null ? undefined : Number(q.priceImpact)
   return {
-    fromTokenAmount: wireAmount('inputAmount.amount', q.inputAmount?.amount, gatewayQuote),
+    fromTokenAmount: BigInt(q.inputAmount.amount),
     toTokenAmount,
     toTokenAmountMin: minOutput(toTokenAmount, quoteSlippageBps(gatewayQuote)),
     fees: feeLines(gatewayQuote).map(({ usd: _usd, ...fee }) => fee),

@@ -59,7 +59,7 @@ interface EvmPayload {
 export interface EvmAccount {
   getAllowance?: (token: string, spender: string) => Promise<bigint>
   sendTransaction: (txOrArray: EvmTx | EvmTx[], config?: unknown) => Promise<{ hash: string }>
-  quoteSendTransaction?: (tx: EvmTx) => Promise<{ fee?: bigint }>
+  quoteSendTransaction?: (tx: EvmTx) => Promise<{ fee?: bigint; gas?: bigint }>
   [key: string]: unknown
 }
 
@@ -67,7 +67,7 @@ export interface EvmAccount {
 export interface EvmSimulateResult {
   /** The order transaction. */
   tx: EvmTx
-  /** The account's fee estimate for it, in wei, or `null` when it cannot estimate. */
+  /** The account's estimate for it (`fee`, else `gas`), or `null` when it cannot estimate. */
   gasEstimate: bigint | null
   /** The approval still required before the order can execute, or `null`. */
   requiredApproval: EvmRequiredApproval | null
@@ -157,9 +157,7 @@ export const evmAdapter = {
         })
       }
       const result = await account.quoteSendTransaction(payload.tx)
-      // WDK's `quoteSendTransaction` returns the fee in wei. A gas-units fallback would put another
-      // unit under the same field.
-      const gasEstimate = result.fee ?? null
+      const gasEstimate = result.fee ?? result.gas ?? null
       return { tx: payload.tx, gasEstimate, requiredApproval, valid: true }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)

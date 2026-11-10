@@ -52,27 +52,6 @@ function hasFeeEntry(breakdown: unknown): boolean {
   )
 }
 
-/** The fee token's USD price may drift this far from the input's: 1%, in hundredths. */
-const PRICE_DRIFT = 101n
-
-/**
- * Whether `feeUsd` is provably more than `bps` of `inputUsd` — gateway `usd` strings — or null
- * when either is not a plain decimal. The opposite leniency of the caps: this binds a quoted fee
- * to the rate the request asked for rather than enforcing a caller's limit, so it only flags a
- * fee clearly over that rate — each value read at the end of its cent rounding that favours the
- * quote, plus 1% for the fee token's USD price drifting from the input's.
- */
-export function exceedsBps(feeUsd: unknown, inputUsd: unknown, bps: number): boolean | null {
-  const fee = usdValue(feeUsd)
-  const input = usdValue(inputUsd)
-  if (fee == null || input == null) return null
-  const rate = BigInt(Math.round(bps * CAP_SCALE))
-  return (
-    (fee - USD_ROUNDING) * 10_000n * BigInt(CAP_SCALE) * 100n >
-    (input + USD_ROUNDING) * rate * PRICE_DRIFT
-  )
-}
-
 /** A cap in millionths of a bp, or `ValueError` unless it is a finite, non-negative number. */
 function scaledCap(cap: string, value: unknown): bigint {
   const n = Number(value)
@@ -90,12 +69,10 @@ function scaledCap(cap: string, value: unknown): bigint {
  * are compared by their gateway-reported USD values — each fee line at the top of its cent
  * rounding, the input at the bottom of its own. The check fails closed: with a cap set, a missing
  * fee breakdown on an onramp/offramp, or a missing USD value on the input or on any non-zero fee
- * it covers, refuses the swidge rather than letting the cap go unchecked. Affiliate fees are not
- * capped: they go to the integrator's configured affiliates, and the swidge refuses a quote that
- * pays anyone else, charges one the request didn't ask for, or charges more than the requested
- * bps (see `exceedsBps`). Token-swap quotes report no fee
- * breakdown — their costs are priced into the output — so the caps have nothing to check there;
- * bound those with `minAmountOut` or `slippage`.
+ * it covers, refuses the swidge rather than letting the cap go unchecked. Affiliate fees are
+ * configured by the integrator and are not capped. Token-swap quotes report no fee breakdown —
+ * their costs are priced into the output — so the caps have nothing to check there; bound those
+ * with `minAmountOut` or `slippage`.
  *
  * @param gw - get-quote response, holding exactly the `variant` key.
  * @param variant - The route's quote variant.

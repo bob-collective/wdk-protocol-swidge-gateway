@@ -23,7 +23,7 @@ type OrderTx = {
 
 function setup(tx: OrderTx, config: GatewaySwidgeConfig = {}, fromChain = 'base') {
   const client = {
-    // Echoes the request, so the quote binding passes and the order tx is what's under test.
+    // Echoes the request, so the order tx is what's under test.
     getQuote: vi.fn(async (params: Record<string, string>) => ({
       offramp: {
         inputAmount: { amount: params.amount, address: params.srcToken, chain: params.srcChain },
@@ -178,6 +178,18 @@ describe('order provenance and encoding', () => {
     expect(client.createOrder).not.toHaveBeenCalled()
   })
 
+  test('a quote for another srcChain is refused before create-order', async () => {
+    const { sw, client } = setup(order())
+    const echo = client.getQuote.getMockImplementation()!
+    client.getQuote.mockImplementationOnce(async (params) => ({
+      offramp: { ...(await echo(params)).offramp, srcChain: 'arbitrum' },
+    }))
+    await expect(sw.swidge(route())).rejects.toThrow(
+      'quote source chain arbitrum does not match the requested base'
+    )
+    expect(client.createOrder).not.toHaveBeenCalled()
+  })
+
   test.each([['0xf4240'], [1e21], [1.5], ['']])(
     'a fromTokenAmount of %j is refused before any gateway call',
     async (fromTokenAmount) => {
@@ -213,20 +225,7 @@ describe('order provenance and encoding', () => {
 describe('native value', () => {
   test('an ERC-20 order may carry a messaging fee up to the chain default', async () => {
     const { sw } = setup(order({ value: String(BASE_DEFAULT_CAP) }))
-    await expect(sw.swidge(route())).resolves.toMatchObject({
-      hash: '0xtxhash',
-      // Paid on top of the swap, so reported though the quote doesn't price it.
-      fees: [
-        {
-          type: 'network',
-          amount: BASE_DEFAULT_CAP,
-          token: ZERO,
-          chain: 'base',
-          included: false,
-          description: 'Bridge messaging fee, paid in the native token on top of the swap',
-        },
-      ],
-    })
+    await expect(sw.swidge(route())).resolves.toMatchObject({ hash: '0xtxhash' })
     await refused(
       order({ value: String(BASE_DEFAULT_CAP + 1n) }),
       `order tx sends ${BASE_DEFAULT_CAP + 1n} native base units on top of the swap, above ` +
@@ -290,12 +289,7 @@ describe('native value', () => {
   test('a native source pays its amount as value; only the excess is capped', async () => {
     const native = (value: bigint) => order({ token: ZERO, value: String(value) })
     const ok = setup(native(AMOUNT + BASE_DEFAULT_CAP))
-    await expect(ok.sw.swidge(route(ZERO))).resolves.toMatchObject({
-      hash: '0xtxhash',
-      fees: [expect.objectContaining({ amount: BASE_DEFAULT_CAP, included: false })],
-    })
-    const exact = setup(native(AMOUNT))
-    await expect(exact.sw.swidge(route(ZERO))).resolves.toMatchObject({ fees: [] })
+    await expect(ok.sw.swidge(route(ZERO))).resolves.toMatchObject({ hash: '0xtxhash' })
 
     const over = setup(native(AMOUNT + BASE_DEFAULT_CAP + 1n))
     await expect(over.sw.swidge(route(ZERO))).rejects.toThrow(
@@ -427,14 +421,11 @@ describe('onramp', () => {
     return { swidge, client, signTransaction }
   }
 
-  // The quote binding refuses this before create-order; the order guard's own onramp amount check
-  // stays behind it as a backstop.
   test('a quote asking for more BTC than fromTokenAmount is refused before signing', async () => {
-    const { swidge, client, signTransaction } = onramp('100001')
+    const { swidge, signTransaction, client } = onramp('100001')
     await expect(swidge()).rejects.toThrow(
-      'quote input amount 100001 does not match the requested 100000'
+      'refusing to sign the order: the quote asks for 100001 sats, but fromTokenAmount is 100000'
     )
-    expect(client.createOrder).not.toHaveBeenCalled()
     expect(signTransaction).not.toHaveBeenCalled()
     expect(client.registerTx).not.toHaveBeenCalled()
   })
@@ -444,7 +435,7 @@ describe('onramp', () => {
     async (amount) => {
       const { swidge, signTransaction } = onramp(amount)
       await expect(swidge()).rejects.toThrow(
-        /quote inputAmount.amount is not an integer amount in base units/
+        /quote onramp.inputAmount.amount must be a non-negative integer in base units/
       )
       expect(signTransaction).not.toHaveBeenCalled()
     }

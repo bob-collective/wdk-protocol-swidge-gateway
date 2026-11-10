@@ -330,13 +330,13 @@ Returns a quote without executing a transaction. Useful for displaying expected 
 
 #### `swidge(options, config?) → Promise<SwidgeResult>`
 
-Executes a swidge. `config` takes per-call `maxNetworkFeeBps` / `maxProtocolFeeBps` and `paymasterToken`. Throws `AccountRequiredError` up front for an account that cannot sign; before creating the order, checks that the quote matches the request (amount, recipient, sender, refund address, tokens, affiliates and their bps), then `minAmountOut` and the fee caps. Returns:
+Executes a swidge. `config` takes per-call `maxNetworkFeeBps` / `maxProtocolFeeBps` and `paymasterToken`. Throws `AccountRequiredError` up front for an account that cannot sign; before creating the order, checks `minAmountOut` and the fee caps. Returns:
 
 | Field              | Type                  | Description                                     |
 | ------------------ | --------------------- | ----------------------------------------------- |
 | `id`               | `string`              | Gateway order ID — pass to `getSwidgeStatus()`. |
 | `hash`             | `string`              | Source-chain transaction hash or TXID.          |
-| `fees`             | `SwidgeFee[]`         | Fee lines from the quote, plus any native messaging fee the order tx paid on top (`included: false`). |
+| `fees`             | `SwidgeFee[]`         | Fee lines from the quote.                       |
 | `transactions`     | `SwidgeTransaction[]` | The source transaction.                         |
 | `fromTokenAmount`  | `bigint`              | Actual input amount.                            |
 | `toTokenAmount`    | `bigint`              | Expected output amount.                         |

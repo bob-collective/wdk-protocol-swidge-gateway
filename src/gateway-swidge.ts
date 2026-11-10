@@ -29,8 +29,8 @@ import { chainFamily, detectVariant, sameChain } from './chains.js'
 import { isBtcAlias, toQuoteParams } from './map/options.js'
 import type { Affiliate } from './map/options.js'
 import { quoteSlippageBps, toSwidgeQuote } from './map/quote.js'
-import type { GatewayQuoteV4, GatewaySwidgeQuote, WireTokenAmount } from './map/quote.js'
-import { assertFeeCaps, exceedsBps } from './fee-caps.js'
+import type { GatewayQuoteV4, GatewaySwidgeQuote } from './map/quote.js'
+import { assertFeeCaps } from './fee-caps.js'
 import { toSwidgeStatus } from './map/status.js'
 import { toSupportedChains, toSupportedTokens } from './map/routes.js'
 import { orderPayload } from './map/order.js'
@@ -41,9 +41,6 @@ import { assertAllowanceHolderSpender } from './allowance-holder.js'
 import { assertOrderPayload, uint } from './order-guard.js'
 
 const BOB_BEARER_TOKEN = '49e52108b436492ebf03e85aa914718b' // gateway-wdk attribution key
-
-/** The gateway's id for a chain's native token. */
-const NATIVE_TOKEN = '0x0000000000000000000000000000000000000000'
 
 function assertPayloadFamily(payload: OrderPayload, srcFamily: string): void {
   const family = payload.kind === 'btc' ? 'bitcoin' : payload.kind
@@ -56,174 +53,23 @@ function assertPayloadFamily(payload: OrderPayload, srcFamily: string): void {
   }
 }
 
-const VARIANTS = ['onramp', 'offramp', 'tokenSwap'] as const
-type Variant = (typeof VARIANTS)[number]
-
 /**
- * The quote must carry exactly the requested variant: the checks read whichever variant key is
- * present, while create-order posts `quote[variant]` — two keys would let them see different
- * quotes.
+ * The quote must be for the requested source chain, which the order tx is then checked against
+ * (`assertOrderPayload`). Every variant but the onramp, whose quote has none, echoes `srcChain`.
  */
-function assertQuoteVariant(quote: GatewayQuoteV4, variant: Variant): void {
-  const present = VARIANTS.filter((v) => quote[v] != null)
-  if (present.length !== 1 || present[0] !== variant || typeof quote[variant] !== 'object') {
-    throw new GatewaySwidgeError(
-      ERR.VALIDATION,
-      `expected a ${variant} quote, got ${present.join(' + ') || 'none'}`,
-      { cause: quote }
-    )
-  }
-}
-
-/**
- * The quote must be for what was asked. create-order posts it verbatim, and an onramp signs and
- * sends the quote's `inputAmount` of BTC — so a quote for another amount, recipient, refund
- * address, token pair, chain pair, slippage or affiliate would execute that instead, while
- * `minAmountOut` and the fee caps (which only compare the quote against itself) still pass.
- *
- * - The amount, the recipient and both token addresses (`inputAmount.address`,
- *   `outputAmount.address`) must be echoed, and `refundAddress` on every variant but the onramp,
- *   whose quote has none — its refund target only travels inside the gateway-signed
- *   `signedQuoteData`, which this module cannot read. The `sender` and the variant-specific token
- *   echoes (the offramp's `tokenAddress`, the onramp's `dstToken`) must match when echoed.
- *   Addresses compare case-insensitively, since the gateway checksums EVM addresses.
- * - Token addresses repeat across chains (USDT0, cbBTC, the zero address), so a token is only
- *   pinned together with its chain: `inputAmount.chain`/`outputAmount.chain` must be echoed (every
- *   variant carries them). The top-level `srcChain` must be echoed and match on every variant but
- *   the onramp (whose quote has none), so a quote for another chain can't pass by omission;
- *   `dstChain` must match when echoed (the offramp quote has none).
- * - A requested slippage must be echoed, and no looser: the quote's slippage sets the floor the
- *   order executes with.
- * - Only the affiliates sent with the request may be paid. The onramp/offramp quote echoes them as
- *   `affiliates[]` (and the first as `affiliateAddress`), the token-swap quote as `affiliate`; none
- *   may name an address that wasn't requested. The fee breakdown's `affiliateFee`, and each
- *   `affiliates[]` entry's `fee`, may be at most the requested bps of the input, compared by USD
- *   value (`exceedsBps`) and refused when unpriced; with none requested, no affiliate fee at all.
- */
-function assertQuoteMatchesRequest(
+function assertQuoteSourceChain(
   quote: GatewayQuoteV4,
-  variant: Variant,
-  params: Record<string, string | undefined>
+  variant: 'onramp' | 'offramp' | 'tokenSwap',
+  srcChain: string
 ): void {
-  const inner = quote[variant] as unknown as Record<string, unknown>
-  const input = inner.inputAmount as WireTokenAmount | undefined
-  const output = inner.outputAmount as WireTokenAmount | undefined
-  const fail = (field: string, got: unknown, want: unknown): never => {
+  const got = (quote[variant] as { srcChain?: unknown } | undefined)?.srcChain
+  if (got == null && variant === 'onramp') return
+  if (typeof got !== 'string' || !sameChain(got, srcChain)) {
     throw new GatewaySwidgeError(
       ERR.VALIDATION,
-      `quote ${field} ${got} does not match the requested ${want}`,
+      `quote source chain ${got} does not match the requested ${srcChain}`,
       { cause: quote }
     )
-  }
-  let amount: bigint | undefined
-  try {
-    amount = BigInt(input?.amount as string)
-  } catch {
-    // fall through
-  }
-  if (amount === undefined || amount !== BigInt(params.amount as string)) {
-    fail('input amount', input?.amount, params.amount)
-  }
-  const echoes: [field: string, got: unknown, want: string | undefined, required: boolean][] = [
-    ['recipient', inner.recipient, params.recipient, true],
-    ['sender', inner.sender, params.sender, false],
-    ['refundAddress', inner.refundAddress, params.refundAddress, variant !== 'onramp'],
-    ['source token', input?.address, params.srcToken, true],
-    ['source token', inner.tokenAddress, params.srcToken, false],
-    ['destination token', output?.address, params.dstToken, true],
-    ['destination token', inner.dstToken, params.dstToken, false],
-  ]
-  for (const [field, got, want, required] of echoes) {
-    if (want == null || (got == null && !required)) continue
-    if (typeof got !== 'string' || got.toLowerCase() !== want.toLowerCase()) fail(field, got, want)
-  }
-
-  const chains: [field: string, got: unknown, want: string, required: boolean][] = [
-    ['source chain', input?.chain, params.srcChain as string, true],
-    ['source chain', inner.srcChain, params.srcChain as string, variant !== 'onramp'],
-    ['destination chain', output?.chain, params.dstChain as string, true],
-    ['destination chain', inner.dstChain, params.dstChain as string, false],
-  ]
-  for (const [field, got, want, required] of chains) {
-    if (got == null && !required) continue
-    if (typeof got !== 'string' || !sameChain(got, want)) fail(field, got, want)
-  }
-
-  if (params.slippage !== undefined) {
-    const bps = quoteSlippageBps(quote)
-    // Inverted so an unparseable requested bound fails closed: `bps > NaN` is false.
-    if (bps === null || !(bps <= Number(params.slippage))) {
-      throw new GatewaySwidgeError(
-        ERR.VALIDATION,
-        `quote slippage ${inner.slippage} is looser than the requested ${params.slippage} bps`,
-        { cause: quote }
-      )
-    }
-  }
-
-  // Address → bps, as `serializeAffiliates` sent them.
-  const requested = new Map(
-    (params.affiliates ?? '')
-      .split(',')
-      .filter(Boolean)
-      .map((a) => {
-        const [address, bps] = a.split(':')
-        return [address.toLowerCase(), Number(bps)] as const
-      })
-  )
-  const list = inner.affiliates
-  const paid: [address: unknown, fee: unknown][] = [
-    ...(list == null ? [] : Array.isArray(list) ? list : [list]),
-    ...(inner.affiliate == null ? [] : [inner.affiliate]),
-  ].map((a) =>
-    a !== null && typeof a === 'object'
-      ? [(a as { address?: unknown }).address, (a as { fee?: unknown }).fee]
-      : [a, undefined]
-  )
-  if (inner.affiliateAddress != null) paid.push([inner.affiliateAddress, undefined])
-  for (const [address] of paid) {
-    if (typeof address !== 'string' || !requested.has(address.toLowerCase())) {
-      throw new GatewaySwidgeError(
-        ERR.VALIDATION,
-        `quote pays affiliate ${address}, which the request did not include`,
-        { cause: quote }
-      )
-    }
-  }
-  // The breakdown's total and each affiliate's own fee may be at most the bps requested for it.
-  // They are in another token than the input, so they are compared by their USD values.
-  const breakdown = inner.feeBreakdown as Record<string, unknown> | undefined
-  let totalBps = 0
-  for (const bps of requested.values()) totalBps += bps
-  const charged: [fee: unknown, bps: number][] = [
-    [breakdown?.affiliateFee, totalBps],
-    ...paid.map(([address, fee]): [unknown, number] => [
-      fee,
-      requested.get((address as string).toLowerCase())!,
-    ]),
-  ]
-  for (const [entry, bps] of charged) {
-    const fee = entry as WireTokenAmount | undefined
-    if (fee?.amount == null || /^0+$/.test(String(fee.amount))) continue
-    if (requested.size === 0) {
-      throw new GatewaySwidgeError(
-        ERR.VALIDATION,
-        `quote charges an affiliate fee of ${fee.amount}, but the request included no affiliates`,
-        { cause: quote }
-      )
-    }
-    const over = exceedsBps(fee.usd, input?.usd, bps)
-    if (over !== false) {
-      throw new GatewaySwidgeError(
-        ERR.VALIDATION,
-        over === null
-          ? `cannot verify the affiliate fee of ${fee.amount}: the quote has no USD price for it ` +
-              'or for the input amount'
-          : `quote charges an affiliate fee of ${fee.amount} ($${fee.usd} on $${input?.usd}), ` +
-              `above the requested ${bps} bps`,
-        { cause: quote }
-      )
-    }
   }
 }
 
@@ -430,14 +276,6 @@ export class GatewaySwidge extends SwidgeProtocol {
     }
     if (options.fromTokenAmount == null) throw new ValueError('fromTokenAmount is required')
     const fromTokenAmount = baseUnits('fromTokenAmount', options.fromTokenAmount)
-    const slippage = options.slippage ?? this._slippage
-    // NaN/Infinity would go out as the literal 'NaN'/'Infinity' bps and void the slippage binding.
-    if (
-      slippage !== undefined &&
-      !(typeof slippage === 'number' && slippage >= 0 && slippage <= 1)
-    ) {
-      throw new ValueError(`slippage must be a fraction between 0 and 1, got ${slippage}`)
-    }
     const { fromChain, toChain, srcFamily, dstFamily } = this._resolveChains(options)
     // 'BTC' resolves to the zero address, which on any other chain is that chain's native gas
     // token — so a 'BTC' toToken with toChain left to default to an EVM source would swap into ETH.
@@ -500,7 +338,6 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   own token, price impact and estimated duration.
    * @throws {ValueError} If `toTokenAmount` is set: exact-out swidges are not supported.
    * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
-   * @throws {ValueError} If `slippage` (per call or configured) is not a number from 0 to 1.
    * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
    *   chain.
    * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
@@ -511,8 +348,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   or offramp: more than 5 entries, a missing or duplicate address, a non-positive `bps`, or
    *   more than 1000 bps in total.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
-   *   errors are retried first), or the quote carries an input, output or fee amount that is not a
-   *   plain decimal integer.
+   *   errors are retried first).
    */
   async quoteSwidge(options: SwidgeOptions): Promise<GatewaySwidgeQuote> {
     const { params, affiliateApplied } = await this._buildQuoteParams(options)
@@ -545,8 +381,9 @@ export class GatewaySwidge extends SwidgeProtocol {
   /**
    * Swaps and/or bridges tokens: quotes, checks the quote, creates a gateway order, then signs
    * and submits its source transaction. Onramps hand the signed Bitcoin transaction to the gateway,
-   * which broadcasts it; offramps and token swaps broadcast from the account. All checks run
-   * before the order is created, so a refused swidge leaves no order behind.
+   * which broadcasts it; offramps and token swaps broadcast from the account. The quote checks run
+   * before the order is created, so a quote they refuse leaves no order behind; the order
+   * transaction is checked after, before anything signs.
    *
    * @param options - The swidge options.
    * @param config - Per-call fee caps (overriding the instance's cap by cap), `maxNativeFee`
@@ -556,7 +393,6 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   `signTransaction` (Bitcoin) or `sendTransaction` (EVM, Tron). Thrown before any gateway call.
    * @throws {ValueError} If `toTokenAmount` is set: exact-out swidges are not supported.
    * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
-   * @throws {ValueError} If `slippage` (per call or configured) is not a number from 0 to 1.
    * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
    *   chain.
    * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
@@ -567,8 +403,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   or offramp: more than 5 entries, a missing or duplicate address, a non-positive `bps`, or
    *   more than 1000 bps in total.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
-   *   errors are retried first), or the quote carries an input, output or fee amount that is not a
-   *   plain decimal integer.
+   *   errors are retried first).
    * @throws {ValueError} If `minAmountOut` is not a non-negative integer.
    * @throws {ValueError} If `maxNetworkFeeBps` or `maxProtocolFeeBps` is not a finite,
    *   non-negative number.
@@ -583,14 +418,10 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   integer: a bigint, a safe integer or a decimal string.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
-   *   variant, input amount, recipient, sender, refund address, token pair or chain pair; a
-   *   slippage looser than requested; an affiliate the request did not include; or an affiliate
-   *   fee above the requested bps, or one that cannot be priced in USD.
-   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
-   *   transaction.
-   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the source chain is one this module cannot sign
-   *   on (`solana`). Thrown before any gateway call.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote is for another source chain than
+   *   the requested one.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if get-quote returns no quote for the route's
+   *   variant, or create-order returns no order id or no transaction.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this
    *   module cannot sign (e.g. `solana`).
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for
@@ -601,9 +432,6 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   sending more native value than `maxNativeFee` on top of the swapped amount, or (Tron) a
    *   `feeLimit` above 100 TRX. Onramp: a BTC amount other than `fromTokenAmount`. Thrown before
    *   signing.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp's deposit address is not a bitcoin
-   *   mainnet address (thrown before signing), or its signed transaction pays that address less
-   *   than the quoted amount. Thrown before register-tx: nothing is broadcast.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if register-tx fails or reports another txid
    *   than the one signed (onramp). The transaction may still have been broadcast: check the chain
    *   or `getSwidgeStatus()` before resending.
@@ -683,10 +511,10 @@ export class GatewaySwidge extends SwidgeProtocol {
   }
 
   /**
-   * Quote → checks → create-order → payload. The checks — and the mapping of the quote, which
-   * parses every amount in it — run before create-order, so a refused swidge leaves no orphaned
-   * order. The payload's family is then checked against the route's, and the transaction itself
-   * against what was asked for (`assertOrderPayload`), before anything signs.
+   * Quote → checks → create-order → payload. The quote checks run before create-order, so a quote
+   * they refuse leaves no orphaned order. The payload's family is then checked against the route's,
+   * and the transaction itself against what was asked for (`assertOrderPayload`), before anything
+   * signs.
    */
   private async _createOrder(
     params: Record<string, string | undefined>,
@@ -694,9 +522,6 @@ export class GatewaySwidge extends SwidgeProtocol {
     srcFamily: string,
     checks: OrderChecks = {}
   ): Promise<{ swidgeQuote: GatewaySwidgeQuote; payload: OrderPayload }> {
-    // A source this module cannot sign on (Solana) would otherwise only fail on the order's tx
-    // type — after create-order, leaving an orphaned order on every attempt.
-    getAdapter(srcFamily)
     if (!params.refundAddress) {
       throw new GatewaySwidgeError(
         ERR.VALIDATION,
@@ -704,12 +529,17 @@ export class GatewaySwidge extends SwidgeProtocol {
           'account with getAddress()'
       )
     }
-    const quote = (await this._client.getQuote(params)) as GatewayQuoteV4
-    assertQuoteVariant(quote, variant)
-    // Mapped before the binding checks, so every malformed amount — input included — fails the
-    // same way (GATEWAY_HTTP_ERROR), and the binding compares amounts that are known to be sane.
+    const response = (await this._client.getQuote(params)) as GatewayQuoteV4
+    if (response?.[variant] == null) {
+      throw new GatewaySwidgeError(ERR.HTTP, `get-quote returned no ${variant} quote`, {
+        cause: response,
+      })
+    }
+    // Only the requested variant: it is what create-order posts, so every check must read it —
+    // not whichever variant key `innerQuote()` finds first.
+    const quote: GatewayQuoteV4 = { [variant]: response[variant] }
+    assertQuoteSourceChain(quote, variant, params.srcChain as string)
     const swidgeQuote = toSwidgeQuote(quote, { affiliateApplied: params.affiliates !== undefined })
-    assertQuoteMatchesRequest(quote, variant, params)
     if (checks.minAmountOut !== undefined) {
       // Without the echoed slippage no floor is known (toTokenAmountMin is 0): say so, rather than
       // report it as a threshold miss.
@@ -730,31 +560,16 @@ export class GatewaySwidge extends SwidgeProtocol {
       }
     }
     if (checks.caps) assertFeeCaps(quote, variant, checks.caps)
-    const order = (await this._client.createOrder({ [variant]: quote[variant] })) as Record<
-      string,
-      unknown
-    >
+    const order = (await this._client.createOrder(quote)) as Record<string, unknown>
     const payload = orderPayload(order, variant, quote)
     assertPayloadFamily(payload, srcFamily)
-    const nativeFee = assertOrderPayload(payload, {
+    assertOrderPayload(payload, {
       chain: params.srcChain as string,
       token: params.srcToken as string,
       // Decimal: _buildQuoteParams parsed and re-serialized it.
       amount: BigInt(params.amount as string),
       maxNativeFee: checks.maxNativeFee,
     })
-    // The quote doesn't price a LayerZero/CCIP messaging fee paid in native `value`, so the fee
-    // caps can't see it (maxNativeFee bounds it); it is still a cost, so it is reported.
-    if (nativeFee > 0n) {
-      swidgeQuote.fees.push({
-        type: 'network',
-        amount: nativeFee,
-        token: NATIVE_TOKEN,
-        chain: params.srcChain,
-        included: false,
-        description: 'Bridge messaging fee, paid in the native token on top of the swap',
-      })
-    }
     return { swidgeQuote, payload }
   }
 
@@ -820,7 +635,6 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   or the fee estimate, the approval still required, and whether the transaction is valid.
    * @throws {ValueError} If `toTokenAmount` is set: exact-out swidges are not supported.
    * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
-   * @throws {ValueError} If `slippage` (per call or configured) is not a number from 0 to 1.
    * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
    *   chain.
    * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
@@ -831,8 +645,7 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   or offramp: more than 5 entries, a missing or duplicate address, a non-positive `bps`, or
    *   more than 1000 bps in total.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
-   *   errors are retried first), or the quote carries an input, output or fee amount that is not a
-   *   plain decimal integer.
+   *   errors are retried first).
    * @throws {ValueError} If `minAmountOut` is not a non-negative integer.
    * @throws {ValueError} If `maxNetworkFeeBps` or `maxProtocolFeeBps` is not a finite,
    *   non-negative number.
@@ -847,14 +660,10 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   integer: a bigint, a safe integer or a decimal string.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
-   *   variant, input amount, recipient, sender, refund address, token pair or chain pair; a
-   *   slippage looser than requested; an affiliate the request did not include; or an affiliate
-   *   fee above the requested bps, or one that cannot be priced in USD.
-   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
-   *   transaction.
-   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the source chain is one this module cannot sign
-   *   on (`solana`). Thrown before any gateway call.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote is for another source chain than
+   *   the requested one.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if get-quote returns no quote for the route's
+   *   variant, or create-order returns no order id or no transaction.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this
    *   module cannot sign (e.g. `solana`).
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for
@@ -866,8 +675,6 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   `feeLimit` above 100 TRX. Onramp: a BTC amount other than `fromTokenAmount`. Thrown before
    *   signing.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if an onramp's account cannot sign transactions.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp's deposit address is not a bitcoin
-   *   mainnet address. Thrown before signing.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an approval is due and its spender is not
    *   the AllowanceHolder pinned for the source chain, or the chain has none pinned.
    */
@@ -990,7 +797,6 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @returns The approval to grant, or `null` when the current allowance covers `fromTokenAmount`
    *   or the route needs none (onramp, native source token).
    * @throws {ValueError} If `fromTokenAmount` is missing or not a non-negative integer.
-   * @throws {ValueError} If `slippage` (per call or configured) is not a number from 0 to 1.
    * @throws {ValueError} If neither `options.fromChain` nor `config.fromChain` names the source
    *   chain.
    * @throws {ValueError} If `'BTC'` is the `fromToken` or `toToken` on a chain other than
@@ -1001,20 +807,15 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   more than 5 entries, a missing or duplicate address, a non-positive `bps`, or more than
    *   1000 bps in total.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if a gateway request fails (transient
-   *   errors are retried first), or the quote carries an input, output or fee amount that is not a
-   *   plain decimal integer.
+   *   errors are retried first).
    * @throws {ValueError} If `maxNativeFee` (per call or configured) is not a non-negative
    *   integer: a bigint, a safe integer or a decimal string.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if no refund address resolves: none in
    *   `options.refundAddress` or `config.refundAddress`, and no account address.
-   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote does not match the request: another
-   *   variant, input amount, recipient, sender, refund address, token pair or chain pair; a
-   *   slippage looser than requested; an affiliate the request did not include; or an affiliate
-   *   fee above the requested bps, or one that cannot be priced in USD.
-   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if create-order returns no order id or no
-   *   transaction.
-   * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if the source chain is one this module cannot sign
-   *   on (`solana`). Thrown before any gateway call.
+   * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if the quote is for another source chain than
+   *   the requested one.
+   * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if get-quote returns no quote for the route's
+   *   variant, or create-order returns no order id or no transaction.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if create-order returns a transaction type this
    *   module cannot sign (e.g. `solana`).
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if create-order returns a transaction for

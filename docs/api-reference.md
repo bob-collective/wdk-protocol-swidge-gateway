@@ -91,7 +91,7 @@ Executes a swidge. Internally: fetches a quote, creates an order, then either ha
 
 `config` takes per-call `maxNetworkFeeBps` / `maxProtocolFeeBps` (overriding the constructor's) and `paymasterToken`.
 
-Before any gateway call, `swidge()` throws `AccountRequiredError` unless the account can sign on the source chain (`signTransaction` for Bitcoin, `sendTransaction` for EVM/Tron) — a read-only account can quote, not execute. Between quote and create-order it checks that the quote is the one asked for — exactly the route's variant, the requested input amount, recipient and token pair, the refund address (every variant but the onramp, whose quote carries none), the sender where echoed, only the configured affiliates and none charging more than its configured bps (compared by USD value, and refused when unpriced), else `GatewaySwidgeError` `VALIDATION_ERROR` — then `minAmountOut` and the fee caps, so a refused swidge leaves no orphaned order. The binding matters because create-order posts the quote verbatim and an onramp sends the quote's `inputAmount` of BTC; the other checks only compare the quote with itself.
+Before any gateway call, `swidge()` throws `AccountRequiredError` unless the account can sign on the source chain (`signTransaction` for Bitcoin, `sendTransaction` for EVM/Tron) — a read-only account can quote, not execute. Between quote and create-order it checks `minAmountOut` and the fee caps, so a refused swidge leaves no orphaned order.
 
 **Returns `SwidgeResult`:**
 
@@ -99,7 +99,7 @@ Before any gateway call, `swidge()` throws `AccountRequiredError` unless the acc
 | ------------------ | --------------------- | --------------------------------------------------------------------- |
 | `id`               | `string`              | Gateway order ID. Pass to `getSwidgeStatus()`.                        |
 | `hash`             | `string`              | Source-chain transaction hash (EVM), bare txid (Tron), or TXID (BTC). |
-| `fees`             | `SwidgeFee[]`         | Fee lines from the quote (see `quoteSwidge()`), plus the native messaging fee the order tx paid on top of the swap, if any (`type: 'network'`, native token `0x000…0` on the source chain, `included: false`). |
+| `fees`             | `SwidgeFee[]`         | Fee lines from the quote (see `quoteSwidge()`).                       |
 | `transactions`     | `SwidgeTransaction[]` | The source transaction: `{ hash, chain, type: 'source' }`.            |
 | `fromTokenAmount`  | `bigint`              | Actual input amount.                                                  |
 | `toTokenAmount`    | `bigint`              | Expected output amount at quoted rate.                                |
@@ -107,7 +107,7 @@ Before any gateway call, `swidge()` throws `AccountRequiredError` unless the acc
 
 ##### Fee caps
 
-`maxNetworkFeeBps` and `maxProtocolFeeBps` are basis points of the input amount. Since fees come in other tokens than the input, they are compared by the USD values the gateway attaches to each amount: `Σ fee.usd / input.usd × 10000`, in fixed-point. The gateway rounds each `usd` to the cent (a sub-cent fee reads `'0'`), so each fee line counts at `+$0.005` and the input at `−$0.005` — rounding can only make the check stricter, by up to half a cent per line. Exceeding a cap throws `MaximumFeeExceededError`. The check fails closed — with a cap set, an onramp/offramp quote without a fee breakdown, or one missing the USD value of the input or of a non-zero fee the cap covers, is refused (also `MaximumFeeExceededError`) rather than let through unchecked, and a fee under a breakdown key this module doesn't recognise is reported as `type: 'other'` and counted against both caps. A cap that isn't a finite, non-negative number throws `ValueError`. Affiliate fees are not capped; the quote binding holds each to its configured bps instead. The native messaging fee a LayerZero/CCIP token swap pays in `value` is not counted either: the quote doesn't price it, so `maxNativeFee` bounds it, and `swidge()` reports it in `fees`. Unset caps are not checked. `simulateSwidge(options, config?)` applies the same caps.
+`maxNetworkFeeBps` and `maxProtocolFeeBps` are basis points of the input amount. Since fees come in other tokens than the input, they are compared by the USD values the gateway attaches to each amount: `Σ fee.usd / input.usd × 10000`, in fixed-point. The gateway rounds each `usd` to the cent (a sub-cent fee reads `'0'`), so each fee line counts at `+$0.005` and the input at `−$0.005` — rounding can only make the check stricter, by up to half a cent per line. Exceeding a cap throws `MaximumFeeExceededError`. The check fails closed — with a cap set, an onramp/offramp quote without a fee breakdown, or one missing the USD value of the input or of a non-zero fee the cap covers, is refused (also `MaximumFeeExceededError`) rather than let through unchecked, and a fee under a breakdown key this module doesn't recognise is reported as `type: 'other'` and counted against both caps. A cap that isn't a finite, non-negative number throws `ValueError`. Affiliate fees are not capped: they are configured by the integrator. The native messaging fee a LayerZero/CCIP token swap pays in `value` is not counted either: the quote doesn't price it, so `maxNativeFee` bounds it. Unset caps are not checked. `simulateSwidge(options, config?)` applies the same caps.
 
 Token-swap quotes carry no fee breakdown (costs are priced into `toTokenAmount`), so the caps have nothing to check there; bound a token swap with `minAmountOut` or `slippage` instead. `minAmountOut` itself is refused (`GatewaySwidgeError` `VALIDATION_ERROR`) when the quote doesn't echo its slippage, since no floor is known then (`toTokenAmountMin` is `0n`). An onramp/offramp quote whose `feeBreakdown` is absent, empty or holds no fee amount counts as having no breakdown.
 
@@ -172,7 +172,7 @@ Turns a `getRequiredApproval()` result into a `TronSmartContractCall` that `Wall
 
 Affiliate fees are **not** applied on EVM↔EVM routes (dropped gracefully; `affiliateApplied: false` in the quote).
 
-These come from WDK's `SwidgeProtocol` base class, which reduces `fees` to one `bigint` (`swap()`/`quoteSwap()`: every fee; `bridge()`/`quoteBridge()`: `network` → `fee`, `protocol` → `bridgeFee`) without looking at each fee's `token`. On token-swap routes that is `0n` (no fee breakdown) — except that `swap()`/`bridge()` count a native messaging fee the order paid, in wei. On an offramp or onramp the fee lines are in different tokens, so the summed number mixes units — read `swidge()`/`quoteSwidge()`'s `fees` instead.
+These come from WDK's `SwidgeProtocol` base class, which reduces `fees` to one `bigint` (`swap()`/`quoteSwap()`: every fee; `bridge()`/`quoteBridge()`: `network` → `fee`, `protocol` → `bridgeFee`) without looking at each fee's `token`. On token-swap routes that is `0n` (no fee breakdown). On an offramp or onramp the fee lines are in different tokens, so the summed number mixes units — read `swidge()`/`quoteSwidge()`'s `fees` instead.
 
 ## `GatewayClient`
 

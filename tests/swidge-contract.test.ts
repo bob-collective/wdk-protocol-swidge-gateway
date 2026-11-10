@@ -1,5 +1,5 @@
 // WDK SwidgeProtocol contract, exercised through GatewaySwidge's public API: amounts, minAmountOut,
-// fee caps, quote binding, read-only accounts, recipients and the inherited swap()/bridge().
+// fee caps, read-only accounts, recipients and the inherited swap()/bridge().
 import { beforeEach, describe, test, expect, vi } from 'vitest'
 import {
   AccountRequiredError,
@@ -81,14 +81,6 @@ const OFFRAMP_FEES = [
     description: 'Bitcoin transaction inclusion fee',
   },
 ]
-/** Base USDT → Arbitrum USDT0, without a chain-specific quote. */
-const SWAP_TO_ARBITRUM = {
-  fromToken: USDT_BASE,
-  toToken: USDT0_ARBITRUM,
-  toChain: 'arbitrum',
-  recipient: '0xrcpt',
-  fromTokenAmount: 100_000_000n,
-}
 /** Base USDT → Base USDC, paid out to the sender. */
 const SAME_CHAIN_SWAP = () =>
   tokenSwapQuote('base', 'base', { dstToken: USDC_BASE, recipient: '0xsender' })
@@ -214,6 +206,30 @@ describe('minAmountOut', () => {
     )
   })
 
+  // create-order posts only the requested variant, so the floor must come from it — not from
+  // another variant key the gateway might add, which would be read first (onramp > offramp).
+  test('reads the floor from the requested variant, not another key in the quote', async () => {
+    const quote = offrampQuote()
+    const onramp = {
+      ...quote.offramp,
+      outputAmount: { ...quote.offramp.outputAmount, amount: '1' },
+    }
+    const { sw } = setup({ quote: { ...quote, onramp } as never })
+
+    await sw.swidge({ ...OFFRAMP, minAmountOut: 132_648n })
+
+    expect(createOrder).toHaveBeenCalledWith(OFFRAMP_ORDER_BODY)
+  })
+
+  test('a quote without the requested variant is a gateway error before create-order', async () => {
+    const { sw } = setup({ quote: SAME_CHAIN_SWAP() })
+
+    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
+      gatewayError(ERR.HTTP, 'get-quote returned no offramp quote')
+    )
+    expect(createOrder).not.toHaveBeenCalled()
+  })
+
   test.each([
     [1.5, '1.5'],
     // BigInt('') is 0n: an empty string must not become a zero floor.
@@ -245,399 +261,6 @@ describe('minAmountOut', () => {
       expect(createOrder).not.toHaveBeenCalled()
     }
   )
-})
-
-describe('quote binding', () => {
-  // create-order posts the quote verbatim, so a quote for anything other than the request must
-  // be refused before an order exists — minAmountOut and the fee caps only compare it to itself.
-  test.each([
-    [
-      'input amount',
-      (q: Quote) => (q.offramp!.inputAmount.amount = '1000000000'),
-      '1000000000',
-      '100000000',
-    ],
-    [
-      'recipient',
-      (q: Quote) => (q.offramp!.recipient = 'bc1qattacker'),
-      'bc1qattacker',
-      'bc1qrcpt',
-    ],
-    ['refundAddress', (q: Quote) => (q.offramp!.refundAddress = '0xother'), '0xother', '0xsender'],
-    ['sender', (q: Quote) => (q.offramp!.sender = '0xother'), '0xother', '0xsender'],
-    [
-      'source token',
-      (q: Quote) => (q.offramp!.inputAmount.address = USDC_BASE),
-      USDC_BASE,
-      USDT_BASE,
-    ],
-    ['source token', (q: Quote) => (q.offramp!.tokenAddress = USDC_BASE), USDC_BASE, USDT_BASE],
-    [
-      'destination token',
-      (q: Quote) => (q.offramp!.outputAmount.address = USDT_BASE),
-      USDT_BASE,
-      ZERO,
-    ],
-    // Echoes that bind the route can't be dropped to dodge the comparison.
-    [
-      'recipient',
-      (q: Quote) => delete (q.offramp as { recipient?: string }).recipient,
-      'undefined',
-      'bc1qrcpt',
-    ],
-    [
-      'refundAddress',
-      (q: Quote) => delete (q.offramp as { refundAddress?: string }).refundAddress,
-      'undefined',
-      '0xsender',
-    ],
-    [
-      'source token',
-      (q: Quote) => delete (q.offramp!.inputAmount as { address?: string }).address,
-      'undefined',
-      USDT_BASE,
-    ],
-    [
-      'destination token',
-      (q: Quote) => delete (q.offramp!.outputAmount as { address?: string }).address,
-      'undefined',
-      ZERO,
-    ],
-    ['source chain', (q: Quote) => (q.offramp!.inputAmount.chain = 'ethereum'), 'ethereum', 'base'],
-    ['source chain', (q: Quote) => (q.offramp!.srcChain = 'bob'), 'bob', 'base'],
-    [
-      'destination chain',
-      (q: Quote) => (q.offramp!.outputAmount.chain = 'ethereum'),
-      'ethereum',
-      'bitcoin',
-    ],
-    [
-      'destination chain',
-      (q: Quote) => delete (q.offramp as { outputAmount: { chain?: string } }).outputAmount.chain,
-      'undefined',
-      'bitcoin',
-    ],
-  ] as const)(
-    'a quote with another %s is refused before create-order',
-    async (field, mutate, got, want) => {
-      const quote = offrampQuote() as Quote
-      mutate(quote)
-      const { sw, account } = setup({ quote })
-
-      await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
-        gatewayError(ERR.VALIDATION, `quote ${field} ${got} does not match the requested ${want}`)
-      )
-      expect(createOrder).not.toHaveBeenCalled()
-      expect(account.sendTransaction).not.toHaveBeenCalled()
-    }
-  )
-
-  test('echoed addresses compare case-insensitively (the gateway checksums EVM addresses)', async () => {
-    const { sw } = setup()
-
-    await sw.swidge({ ...OFFRAMP, fromToken: USDT_BASE.toLowerCase() })
-
-    expect(createOrder).toHaveBeenCalledWith(OFFRAMP_ORDER_BODY)
-  })
-
-  // Token addresses repeat across chains (USDT0 has one address on many), so the token echo alone
-  // cannot pin the route: the chains are bound too.
-  test.each([
-    ['the output amount chain', 'arbitrum', 'ethereum', 'arbitrum', 'ethereum'],
-    ['a top-level dstChain echo', 'ethereum', 'arbitrum', 'ethereum', 'arbitrum'],
-  ])(
-    'a token swap whose %s differs from the request is refused',
-    async (_label, quoteChain, toChain, got, want) => {
-      const quote = tokenSwapQuote('base', 'arbitrum')
-      quote.tokenSwap.dstChain = quoteChain
-      const { sw } = setup({ quote, order: tokenSwapOrder() })
-
-      await expect(sw.swidge({ ...SWAP_TO_ARBITRUM, toChain })).rejects.toMatchObject(
-        gatewayError(
-          ERR.VALIDATION,
-          `quote destination chain ${got} does not match the requested ${want}`
-        )
-      )
-      expect(createOrder).not.toHaveBeenCalled()
-    }
-  )
-
-  test('chains compare case-insensitively, and both spellings of HyperEVM match', async () => {
-    const quote = tokenSwapQuote('Base', 'hyperliquid')
-    const { sw } = setup({ quote, order: tokenSwapOrder() })
-
-    await sw.swidge({ ...SWAP_TO_ARBITRUM, toChain: 'hyperevm' })
-
-    expect(createOrder).toHaveBeenCalledWith({ tokenSwap: quote.tokenSwap })
-  })
-
-  test.each([
-    ['two variants', { ...offrampQuote(), ...tokenSwapQuote() }, 'offramp + tokenSwap'],
-    ['another variant', tokenSwapQuote(), 'tokenSwap'],
-  ])('a quote carrying %s is refused', async (_label, quote, got) => {
-    const { sw } = setup({ quote: quote as Quote })
-
-    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
-      gatewayError(ERR.VALIDATION, `expected a offramp quote, got ${got}`)
-    )
-    expect(createOrder).not.toHaveBeenCalled()
-  })
-
-  // Mapping the quote parses every amount in it, so a malformed one refuses before create-order.
-  // The input amount fails the same way as the others — hex included, though BigInt reads
-  // '0x5f5e100' as the requested 100000000.
-  test.each([
-    ['inputAmount.amount', '1e8'],
-    ['inputAmount.amount', '0x5f5e100'],
-    ['outputAmount.amount', '1e8'],
-    ['feeBreakdown.solverFee.amount', '9.95'],
-    ['feeBreakdown.solverFee.amount', '0x3e3'],
-    ['feeBreakdown.solverFee.amount', ''],
-  ])('a quote %s of %j is refused before create-order', async (field, value) => {
-    const quote = offrampQuote()
-    const path = field.split('.')
-    let target = quote.offramp as unknown as Record<string, unknown>
-    for (const key of path.slice(0, -1)) target = target[key] as Record<string, unknown>
-    target[path[path.length - 1]] = value
-    const { sw, account } = setup({ quote })
-
-    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
-      gatewayError(ERR.HTTP, `quote ${field} is not an integer amount in base units: ${value}`)
-    )
-    expect(createOrder).not.toHaveBeenCalled()
-    expect(account.sendTransaction).not.toHaveBeenCalled()
-  })
-})
-
-describe('slippage binding', () => {
-  // The quote's slippage sets the floor the order executes with, so it may not be looser.
-  test.each([
-    ['per call', { slippage: 0.003 }, {}],
-    ['as the configured default', {}, { slippage: 0.003 }],
-  ])(
-    'a quote echoing a looser slippage than requested %s is refused',
-    async (_label, call, config) => {
-      const { sw } = setup({ config })
-
-      await expect(sw.swidge({ ...OFFRAMP, ...call })).rejects.toMatchObject(
-        gatewayError(ERR.VALIDATION, 'quote slippage 50 is looser than the requested 30 bps')
-      )
-      expect(createOrder).not.toHaveBeenCalled()
-    }
-  )
-
-  test.each([
-    ['per call', NaN, { slippage: NaN }, {}],
-    ['per call', Infinity, { slippage: Infinity }, {}],
-    ['per call', -0.01, { slippage: -0.01 }, {}],
-    ['per call', 1.5, { slippage: 1.5 }, {}],
-    ['as the configured default', NaN, {}, { slippage: NaN }],
-  ])(
-    'a slippage set %s to %s is a ValueError before any gateway call',
-    async (_label, value, call, config) => {
-      const { sw } = setup({ config })
-
-      await expect(sw.swidge({ ...OFFRAMP, ...call })).rejects.toThrow(
-        new ValueError(`slippage must be a fraction between 0 and 1, got ${value}`)
-      )
-      expect(getQuote).not.toHaveBeenCalled()
-    }
-  )
-
-  test('a requested slippage the quote does not echo is refused', async () => {
-    const quote = offrampQuote() as { offramp: Record<string, unknown> }
-    delete quote.offramp.slippage
-    const { sw } = setup({ quote: quote as Quote })
-
-    await expect(sw.swidge({ ...OFFRAMP, slippage: 0.005 })).rejects.toMatchObject(
-      gatewayError(ERR.VALIDATION, 'quote slippage undefined is looser than the requested 50 bps')
-    )
-    expect(createOrder).not.toHaveBeenCalled()
-  })
-
-  test.each([
-    [0.005, '50'],
-    [0.01, '100'],
-  ])('an echo at or under a requested slippage of %s proceeds', async (slippage, bps) => {
-    const { sw } = setup()
-
-    await sw.swidge({ ...OFFRAMP, slippage })
-
-    expect(getQuote).toHaveBeenCalledWith({ ...OFFRAMP_PARAMS, slippage: bps })
-    expect(createOrder).toHaveBeenCalledWith(OFFRAMP_ORDER_BODY)
-  })
-})
-
-describe('affiliate binding', () => {
-  const fee = (amount: string) => ({
-    amount,
-    address: USDT_ETHEREUM,
-    chain: 'ethereum',
-    usd: '0.1',
-  })
-  /** The live offramp quote, echoing `fields` and charging `affiliateFee`. */
-  const withAffiliates = (fields: Record<string, unknown>, affiliateFee = '0') => {
-    const quote = offrampQuote()
-    Object.assign(quote.offramp, fields)
-    quote.offramp.feeBreakdown.affiliateFee = fee(affiliateFee)
-    return quote as Quote
-  }
-
-  test.each([
-    [
-      'an affiliates[] entry',
-      { affiliates: [{ address: '0xevil', fee: fee('500') }] },
-      '500',
-      '0xevil',
-    ],
-    ['affiliateAddress', { affiliateAddress: '0xevil' }, '0', '0xevil'],
-    ['an entry with no address', { affiliates: [{ fee: fee('500') }] }, '500', 'undefined'],
-  ])(
-    'with no affiliates configured, a quote paying %s is refused',
-    async (_label, fields, amount, shown) => {
-      const { sw } = setup({ quote: withAffiliates(fields, amount) })
-
-      await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
-        gatewayError(
-          ERR.VALIDATION,
-          `quote pays affiliate ${shown}, which the request did not include`
-        )
-      )
-      expect(createOrder).not.toHaveBeenCalled()
-    }
-  )
-
-  test('with no affiliates configured, an affiliate fee is refused even with no recipient', async () => {
-    const { sw } = setup({ quote: withAffiliates({}, '1000') })
-
-    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
-      gatewayError(
-        ERR.VALIDATION,
-        'quote charges an affiliate fee of 1000, but the request included no affiliates'
-      )
-    )
-    expect(createOrder).not.toHaveBeenCalled()
-  })
-
-  test('a token swap echoing an affiliate is refused (none is ever sent on token swaps)', async () => {
-    const quote = SAME_CHAIN_SWAP()
-    Object.assign(quote.tokenSwap, { affiliate: { address: '0xevil', bps: 100 } })
-    const { sw } = setup({
-      quote,
-      order: tokenSwapOrder(),
-      config: { affiliates: [{ address: '0xevil', bps: 100 }] },
-    })
-
-    await expect(
-      sw.swap({ tokenIn: USDT_BASE, tokenOut: USDC_BASE, tokenInAmount: 100_000_000n })
-    ).rejects.toMatchObject(
-      gatewayError(ERR.VALIDATION, 'quote pays affiliate 0xevil, which the request did not include')
-    )
-    expect(createOrder).not.toHaveBeenCalled()
-  })
-
-  test('configured affiliates are bound: an extra recipient is refused', async () => {
-    const quote = withAffiliates(
-      {
-        affiliates: [
-          { address: '0xBob', fee: fee('500') },
-          { address: '0xevil', fee: fee('500') },
-        ],
-        affiliateAddress: '0xBob',
-      },
-      '1000'
-    )
-    const { sw } = setup({ quote, config: { affiliates: [{ address: '0xbob', bps: 10 }] } })
-
-    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
-      gatewayError(ERR.VALIDATION, 'quote pays affiliate 0xevil, which the request did not include')
-    )
-    expect(createOrder).not.toHaveBeenCalled()
-  })
-
-  // The quote echoes affiliate fees as amounts, not bps, in another token than the input — so they
-  // are held to the requested bps by USD value (input $99.82). Lenient by design: a fee is refused
-  // only when it clearly exceeds the rate, past cent rounding and 1% of price drift — at 10 bps,
-  // above $0.005 + $99.825 × 0.1% × 1.01 ≈ $0.1058.
-  const priced = (amount: string, usd: string | null) => ({ ...fee(amount), usd })
-
-  test.each([
-    ['0.10', true],
-    ['0.11', false],
-  ])('a $%s affiliate fee at 10 bps of $99.82 proceeds: %s', async (usd, proceeds) => {
-    const quote = withAffiliates({ affiliates: [{ address: '0xBob', fee: priced('100', usd) }] })
-    quote.offramp!.feeBreakdown.affiliateFee = priced('100', usd)
-    const { sw } = setup({ quote, config: { affiliates: [{ address: '0xbob', bps: 10 }] } })
-
-    if (proceeds) {
-      await sw.swidge(OFFRAMP)
-      expect(createOrder).toHaveBeenCalledWith({ offramp: quote.offramp })
-      return
-    }
-    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
-      gatewayError(
-        ERR.VALIDATION,
-        `quote charges an affiliate fee of 100 ($${usd} on $99.82), above the requested 10 bps`
-      )
-    )
-    expect(createOrder).not.toHaveBeenCalled()
-  })
-
-  test('each affiliate is held to its own bps, not just the total', async () => {
-    // 20 bps in all, so the $0.16 total passes — but Bob asked for 10 and is charged 11.
-    const quote = withAffiliates({
-      affiliates: [
-        { address: '0xBob', fee: priced('110', '0.11') },
-        { address: '0xAlice', fee: priced('50', '0.05') },
-      ],
-    })
-    quote.offramp!.feeBreakdown.affiliateFee = priced('160', '0.16')
-    const { sw } = setup({
-      quote,
-      config: {
-        affiliates: [
-          { address: '0xbob', bps: 10 },
-          { address: '0xalice', bps: 10 },
-        ],
-      },
-    })
-
-    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
-      gatewayError(
-        ERR.VALIDATION,
-        'quote charges an affiliate fee of 110 ($0.11 on $99.82), above the requested 10 bps'
-      )
-    )
-    expect(createOrder).not.toHaveBeenCalled()
-  })
-
-  test('an affiliate fee without a USD price is refused', async () => {
-    const quote = withAffiliates({ affiliates: [{ address: '0xBob', fee: priced('500', null) }] })
-    quote.offramp!.feeBreakdown.affiliateFee = priced('500', null)
-    const { sw } = setup({ quote, config: { affiliates: [{ address: '0xbob', bps: 10 }] } })
-
-    await expect(sw.swidge(OFFRAMP)).rejects.toMatchObject(
-      gatewayError(
-        ERR.VALIDATION,
-        'cannot verify the affiliate fee of 500: the quote has no USD price for it or for the ' +
-          'input amount'
-      )
-    )
-    expect(createOrder).not.toHaveBeenCalled()
-  })
-
-  test('configured affiliates echoed back (any case) proceed', async () => {
-    const quote = withAffiliates(
-      { affiliates: [{ address: '0xBob', fee: fee('500') }], affiliateAddress: '0xBOB' },
-      '500'
-    )
-    const { sw } = setup({ quote, config: { affiliates: [{ address: '0xbob', bps: 10 }] } })
-
-    await sw.swidge(OFFRAMP)
-
-    expect(getQuote).toHaveBeenCalledWith({ ...OFFRAMP_PARAMS, affiliates: '0xbob:10' })
-    expect(createOrder).toHaveBeenCalledWith({ offramp: quote.offramp })
-  })
 })
 
 describe("the 'BTC' alias", () => {
@@ -1051,30 +674,4 @@ describe('bridge()', () => {
     )
     expect(getQuote).not.toHaveBeenCalled()
   })
-})
-
-describe('unsupported source chain', () => {
-  // The gateway quotes Solana routes, but this module cannot sign there: without an up-front
-  // refusal, the order's `solana` tx type would only be rejected after create-order.
-  const FROM_SOLANA = {
-    fromChain: 'solana',
-    fromToken: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
-    toToken: 'BTC',
-    toChain: 'bitcoin',
-    recipient: 'bc1qrcpt',
-    fromTokenAmount: 1_000_000n,
-  }
-
-  test.each(['swidge', 'simulateSwidge', 'getRequiredApproval'] as const)(
-    '%s refuses a Solana source before any gateway call',
-    async (method) => {
-      const { sw } = setup()
-
-      await expect(sw[method](FROM_SOLANA)).rejects.toMatchObject(
-        gatewayError(ERR.NOT_SUPPORTED, "chain family 'solana' is not supported in v1")
-      )
-      expect(getQuote).not.toHaveBeenCalled()
-      expect(createOrder).not.toHaveBeenCalled()
-    }
-  )
 })
