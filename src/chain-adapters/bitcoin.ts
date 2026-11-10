@@ -4,7 +4,7 @@ import { GatewaySwidgeError, ERR } from '../errors.js'
 
 // Taproot (P2TR) deposit addresses cannot be parsed without an ECC library. Register ours here
 // rather than relying on a wdk-wallet-btc version that happens to share our bitcoinjs-lib copy
-// and initialize it for us — see tests/taproot-ecc.test.ts.
+// and initialize it for us — see the taproot deposit test in tests/simulate-swidge.test.ts.
 initEccLib(ecc)
 
 export interface BtcAccount {

@@ -301,11 +301,11 @@ export class GatewaySwidge extends SwidgeProtocol {
     // A same-chain swap pays out to the sender by default. Cross-chain routes need an explicit
     // recipient: the sender's address may be invalid on the destination (another chain family) or
     // not controlled there (an ERC-4337 account is only deployed where it was deployed).
-    const sameChain = toChain.toLowerCase() === fromChain.toLowerCase()
-    const recipient = options.recipient ?? (sameChain ? fromAddress : undefined)
+    const isSameChain = sameChain(fromChain, toChain)
+    const recipient = options.recipient ?? (isSameChain ? fromAddress : undefined)
     if (!recipient) {
       throw new ValueError(
-        sameChain
+        isSameChain
           ? 'recipient is required: pass options.recipient, or use an account with getAddress()'
           : `recipient is required for cross-chain routes (${fromChain} → ${toChain})`
       )

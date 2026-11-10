@@ -2,6 +2,7 @@
 // allowance goes out through the arbitrary contract-call path via `buildTronApproval`.
 import { GatewaySwidge, buildTronApproval } from '../src/index.js'
 import type { HttpTransport } from '../src/http.js'
+import type { IWalletAccount } from '../src/index.js'
 
 interface TronAccount {
   sendTransaction(tx: unknown): Promise<{ hash: string }>
@@ -10,7 +11,7 @@ interface TronAccount {
 const POLL_INTERVAL_MS = 3_000
 const MAX_POLLS = 20
 
-export async function run({ account, http }: { account?: unknown; http?: HttpTransport }) {
+export async function run({ account, http }: { account: IWalletAccount; http?: HttpTransport }) {
   const sw = new GatewaySwidge(account, { fromChain: 'tron', http })
   const route = {
     fromToken: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t', // USDT on Tron

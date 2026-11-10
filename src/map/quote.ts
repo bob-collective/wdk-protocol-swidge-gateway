@@ -65,7 +65,7 @@ export function innerQuote(gw: GatewayQuoteV4): InnerQuote {
  * Non-zero fees of a quote, one line per fee-breakdown entry. Entries are never summed: each is
  * denominated in its own token (an offramp's solver fee is USDT, its inclusion fee is BTC sats).
  * An amount entry under a key not in `FEE_KEYS` becomes an `other` line named after its key, so
- * a fee the gateway adds later still shows up — and still counts against the network cap.
+ * a fee the gateway adds later still shows up — and still counts against both fee caps.
  */
 export function feeLines(gw: GatewayQuoteV4): FeeLine[] {
   const fb = innerQuote(gw).feeBreakdown || {}
