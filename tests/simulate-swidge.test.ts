@@ -1,403 +1,309 @@
-/**
- * Tests for simulate() adapter methods and GatewaySwidge.simulateSwidge().
- *
- * BTC output-address match validation uses real bitcoinjs-lib:
- *   - Build a Transaction that pays a known bech32 address via `address.toOutputScript`.
- *   - The mock signTransaction returns this tx hex.
- *   - bitcoinAdapter.simulate() parses it with `Transaction.fromHex` and checks outputs.
- */
-import { describe, test, expect, vi } from 'vitest'
-import { Transaction, address as btcAddress, networks } from 'bitcoinjs-lib'
-import { bitcoinAdapter } from '../src/chain-adapters/bitcoin.js'
-import { evmAdapter } from '../src/chain-adapters/evm.js'
-import { MAX_UINT256 } from '../src/allowance-holder.js'
-import { GatewaySwidge } from '../src/gateway-swidge.js'
-import type { GatewayClient } from '../src/gateway-client.js'
-import { buildTronTx, OWNER, REGISTRY } from './fixtures/tron.js'
+// simulateSwidge() on Bitcoin and EVM source routes: everything swidge() does short of
+// broadcasting. Tron routes are covered in tron.test.ts.
+import { beforeEach, describe, test, expect, vi } from 'vitest'
+import { ERR, GatewaySwidge } from '../src/index.js'
+import type { GatewayClient } from '../src/index.js'
+import { gatewayError } from './helpers.js'
+import {
+  ALLOWANCE_HOLDER,
+  BTC_SENDER,
+  DEPOSIT_ADDRESS,
+  EVM_RECIPIENT,
+  USDT_BASE,
+  USDT_ETHEREUM,
+  ZERO,
+  offrampOrder,
+  offrampQuote,
+  onrampOrder,
+  onrampQuote,
+} from './fixtures/gateway.js'
+import {
+  SIGNED_TXID,
+  SIGNED_TX_HEX,
+  UNDERPAYING_TXID,
+  UNDERPAYING_TX_HEX,
+} from './fixtures/bitcoin.js'
 
-// ─── helpers ──────────────────────────────────────────────────────────────────
+const getQuote = vi.fn()
+const createOrder = vi.fn()
+const registerTx = vi.fn()
+const client = { getQuote, createOrder, registerTx } as unknown as GatewayClient
 
-const DEPOSIT_ADDR = 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4' // known P2WPKH mainnet address
-const AMOUNT = 100_000n // satoshis
+const MAX_UINT256 = 2n ** 256n - 1n
 
-/**
- * Build a minimal (unsigned-inputs) Transaction that pays DEPOSIT_ADDR with AMOUNT.
- * Inputs don't need valid scripts for the output-validation check.
- */
-function buildTxPayingDeposit(addr: string, satoshis: bigint): { hex: string; txid: string } {
-  const tx = new Transaction()
-  tx.addInput(Buffer.alloc(32, 0), 0) // dummy input
-  const script = btcAddress.toOutputScript(addr, networks.bitcoin)
-  tx.addOutput(script, Number(satoshis))
-  return { hex: tx.toHex(), txid: tx.getId() }
-}
+beforeEach(() => {
+  vi.resetAllMocks()
+})
 
-function fakeClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
-  return {
-    getQuote: vi.fn(async () => ({
-      onramp: {
-        inputAmount: { amount: '100000', chain: 'bitcoin' },
-        outputAmount: { amount: '99000', chain: 'base' },
-        fees: {},
-      },
-    })),
-    createOrder: vi.fn(async () => ({
-      onramp: { order_id: 'sim-order-1', address: DEPOSIT_ADDR, inputAmount: { amount: '100000' } },
-    })),
-    registerTx: vi.fn(async () => ({})),
-    getOrder: vi.fn(async () => ({ status: { success: { received_tokens: [] } } })),
-    getRoutes: vi.fn(async () => []),
-    ...overrides,
-  } as unknown as GatewayClient
-}
-
-function fakeEvmClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
-  return {
-    getQuote: vi.fn(async () => ({
-      offramp: {
-        inputAmount: { amount: '1000', chain: 'base' },
-        outputAmount: { amount: '900', chain: 'bitcoin' },
-        fees: {},
-      },
-    })),
-    createOrder: vi.fn(async () => ({
-      offramp: {
-        order_id: 'sim-order-evm',
-        tx: { to: '0x0000000000001fF3684f28c67538d4D072C22734', data: '0xdata', value: '0' },
-      },
-    })),
-    registerTx: vi.fn(async () => ({})),
-    getOrder: vi.fn(async () => ({ status: { success: { received_tokens: [] } } })),
-    getRoutes: vi.fn(async () => []),
-    ...overrides,
-  } as unknown as GatewayClient
-}
-
-const USDT_TRON = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
-
-function fakeTronClient(overrides: Partial<GatewayClient> = {}): GatewayClient {
-  return {
-    getQuote: vi.fn(async () => ({
-      offramp: {
-        inputAmount: { amount: '1000000', chain: 'tron' },
-        outputAmount: { amount: '900', chain: 'bitcoin' },
-        srcChain: 'tron',
-      },
-    })),
-    createOrder: vi.fn(async () => ({
-      offramp: {
-        order_id: 'sim-order-tron',
-        tx: {
-          type: 'tron',
-          to: REGISTRY,
-          data: '0xfeed',
-          value: '0',
-          chain: 'tron',
-          feeLimit: '100000000',
-        },
-      },
-    })),
-    registerTx: vi.fn(async () => ({})),
-    getOrder: vi.fn(async () => ({ status: { success: { received_tokens: [] } } })),
-    getRoutes: vi.fn(async () => []),
-    ...overrides,
-  } as unknown as GatewayClient
-}
-
-// ─── bitcoinAdapter.simulate() ────────────────────────────────────────────────
-
-describe('bitcoinAdapter.simulate()', () => {
-  test('valid: true when output pays deposit address with exact amount', async () => {
-    const { hex, txid } = buildTxPayingDeposit(DEPOSIT_ADDR, AMOUNT)
-    const account = {
-      getAddress: vi.fn(() => 'bc1qtest'),
-      signTransaction: vi.fn(async () => hex),
+describe('simulateSwidge: onramp', () => {
+  class DummyBtcAccount {
+    signTransaction = vi.fn()
+    async getAddress() {
+      return BTC_SENDER
     }
-    const result = await bitcoinAdapter.simulate(
-      account,
-      { address: DEPOSIT_ADDR, amount: AMOUNT },
-      {}
-    )
+  }
+
+  const ONRAMP = {
+    fromToken: 'BTC',
+    toToken: USDT_BASE,
+    toChain: 'base',
+    recipient: EVM_RECIPIENT,
+    fromTokenAmount: 50_000n,
+  }
+
+  /** `SwidgeQuote` for `onrampQuote()`: 37141289 × (1 − 50 bps) = 36955582. */
+  const SWIDGE_QUOTE = {
+    fromTokenAmount: 50_000n,
+    toTokenAmount: 37_141_289n,
+    toTokenAmountMin: 36_955_582n,
+    fees: [
+      {
+        type: 'network',
+        amount: 373n,
+        token: USDT_ETHEREUM,
+        chain: 'ethereum',
+        included: true,
+        description: 'Solver fee',
+      },
+      {
+        type: 'network',
+        amount: 195_982n,
+        token: USDT_ETHEREUM,
+        chain: 'ethereum',
+        included: true,
+        description: 'Destination-chain execution fee',
+      },
+    ],
+    estimatedDuration: 616,
+    priceImpact: -0.0002,
+    affiliateApplied: false,
+  }
+
+  beforeEach(() => {
+    getQuote.mockResolvedValue(onrampQuote())
+    createOrder.mockResolvedValue(onrampOrder())
+  })
+
+  // DEPOSIT_ADDRESS is taproot (P2TR), and checking what the signed tx pays to it needs an ECC
+  // library registered with bitcoinjs-lib. The module registers its own: wdk-wallet-btc used to do
+  // it for us while both shared one bitcoinjs-lib copy, until its move to bitcoinjs-lib 7 split the
+  // copies. This file deliberately loads no wdk-wallet package, so this test fails if ours stops.
+  test('signs the deposit payment without handing it to register-tx', async () => {
+    const account = new DummyBtcAccount()
+    account.signTransaction.mockResolvedValue(SIGNED_TX_HEX)
+    const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
+
+    const result = await sw.simulateSwidge(ONRAMP)
+
+    expect(createOrder).toHaveBeenCalledWith({ onramp: onrampQuote().onramp })
     expect(account.signTransaction).toHaveBeenCalledWith({
-      to: DEPOSIT_ADDR,
-      value: AMOUNT,
+      to: DEPOSIT_ADDRESS,
+      value: 50_000n,
       feeRate: undefined,
     })
-    expect(result.valid).toBe(true)
-    expect(result.paidToDeposit).toBe(AMOUNT)
-    expect(result.signedTxHex).toBe(hex)
-    expect(result.txid).toBe(txid)
-  })
-
-  test('valid: false when output underpays deposit address', async () => {
-    const lessAmount = AMOUNT - 1n
-    const { hex } = buildTxPayingDeposit(DEPOSIT_ADDR, lessAmount)
-    const account = {
-      getAddress: vi.fn(() => 'bc1qtest'),
-      signTransaction: vi.fn(async () => hex),
-    }
-    const result = await bitcoinAdapter.simulate(
-      account,
-      { address: DEPOSIT_ADDR, amount: AMOUNT },
-      {}
-    )
-    expect(result.valid).toBe(false)
-    expect(result.paidToDeposit).toBe(lessAmount)
-  })
-
-  test('throws NOT_SUPPORTED when signTransaction is missing', async () => {
-    const account = { getAddress: vi.fn(() => 'bc1qtest') }
-    await expect(
-      bitcoinAdapter.simulate(
-        account as Parameters<typeof bitcoinAdapter.simulate>[0],
-        { address: DEPOSIT_ADDR, amount: AMOUNT },
-        {}
-      )
-    ).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
-  })
-})
-
-// ─── evmAdapter.simulate() ────────────────────────────────────────────────────
-
-describe('evmAdapter.simulate()', () => {
-  test('valid: true when quoteSendTransaction resolves, requiredApproval null (allowance sufficient)', async () => {
-    const account = {
-      getAllowance: vi.fn(async () => 2000n),
-      sendTransaction: vi.fn(),
-      quoteSendTransaction: vi.fn(async () => ({ fee: 21000n })),
-    }
-    const payload = { kind: 'evm' as const, tx: { to: '0xspender', data: '0xd', value: '0' } }
-    const result = await evmAdapter.simulate(account, payload, {
-      token: '0xtok',
-      spender: '0xspender',
-      amount: 1000n,
-    })
-    expect(result.valid).toBe(true)
-    expect(result.gasEstimate).toBe(21000n)
-    expect(result.requiredApproval).toBeNull()
-    expect(account.sendTransaction).not.toHaveBeenCalled()
-  })
-
-  test('valid: false when quoteSendTransaction throws (revert), reason captured, no rethrow', async () => {
-    const account = {
-      getAllowance: vi.fn(async () => 0n),
-      sendTransaction: vi.fn(),
-      quoteSendTransaction: vi.fn(async () => {
-        throw new Error('execution reverted: insufficient allowance')
-      }),
-    }
-    const payload = { kind: 'evm' as const, tx: { to: '0xspender', data: '0xd', value: '0' } }
-    const result = await evmAdapter.simulate(account, payload, {
-      token: '0xtok',
-      spender: '0xspender',
-      amount: 1000n,
-    })
-    expect(result.valid).toBe(false)
-    expect(result.gasEstimate).toBeNull()
-    expect(result.reason).toContain('insufficient allowance')
-    expect(result.requiredApproval).toEqual({
-      token: '0xtok',
-      spender: '0xspender',
-      amount: MAX_UINT256,
-    })
-    expect(account.sendTransaction).not.toHaveBeenCalled()
-  })
-
-  test('requiredApproval present when allowance is insufficient and quoteSendTransaction resolves', async () => {
-    const account = {
-      getAllowance: vi.fn(async () => 50n),
-      sendTransaction: vi.fn(),
-      quoteSendTransaction: vi.fn(async () => ({ fee: 21000n })),
-    }
-    const payload = { kind: 'evm' as const, tx: { to: '0xspender', data: '0xd', value: '0' } }
-    const result = await evmAdapter.simulate(account, payload, {
-      token: '0xtok',
-      spender: '0xspender',
-      amount: 1000n,
-    })
-    expect(result.valid).toBe(true)
-    expect(result.requiredApproval).toEqual({
-      token: '0xtok',
-      spender: '0xspender',
-      amount: MAX_UINT256,
-    })
-  })
-
-  test('valid: false when the allowance read itself fails, no rethrow', async () => {
-    const account = {
-      getAllowance: vi.fn(async () => {
-        throw new Error('node unreachable')
-      }),
-      sendTransaction: vi.fn(),
-      quoteSendTransaction: vi.fn(async () => ({ fee: 21000n })),
-    }
-    const payload = { kind: 'evm' as const, tx: { to: '0xspender', data: '0xd', value: '0' } }
-    const result = await evmAdapter.simulate(account, payload, {
-      token: '0xtok',
-      spender: '0xspender',
-      amount: 1000n,
-    })
-    expect(result.valid).toBe(false)
-    expect(result.reason).toContain('node unreachable')
-    expect(result.requiredApproval).toBeNull()
-    expect(account.quoteSendTransaction).not.toHaveBeenCalled()
-  })
-
-  test('throws NOT_SUPPORTED when quoteSendTransaction is missing', async () => {
-    const account = {
-      getAllowance: vi.fn(async () => 0n),
-      sendTransaction: vi.fn(),
-    }
-    const payload = { kind: 'evm' as const, tx: { to: '0xspender', data: '0xd', value: '0' } }
-    await expect(
-      evmAdapter.simulate(account as Parameters<typeof evmAdapter.simulate>[0], payload, {})
-    ).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
-  })
-})
-
-// ─── GatewaySwidge.simulateSwidge() ──────────────────────────────────────────
-
-describe('GatewaySwidge.simulateSwidge()', () => {
-  test('onramp simulate: valid, paidToDeposit ≥ amount, registerTx never called', async () => {
-    const { hex } = buildTxPayingDeposit(DEPOSIT_ADDR, AMOUNT)
-    const account = {
-      getAddress: async () => 'bc1qcaller',
-      signTransaction: async () => hex,
-    }
-    const client = fakeClient()
-    const sw = new GatewaySwidge(account, { fromChain: 'bitcoin', client })
-    const result = await sw.simulateSwidge({
-      fromToken: 'BTC',
-      toToken: 'USDT',
-      toChain: 'base',
-      recipient: '0xrcpt',
-      fromTokenAmount: AMOUNT,
-    })
-    expect(result.broadcast).toBe(false)
-    expect(result.orderId).toBe('sim-order-1')
-    expect(result.variant).toBe('onramp')
-    expect('onramp' in result).toBe(true)
-    if ('onramp' in result) {
-      expect(result.onramp.valid).toBe(true)
-      expect(result.onramp.paidToDeposit).toBeGreaterThanOrEqual(AMOUNT)
-    }
-    expect(client.registerTx).not.toHaveBeenCalled()
-  })
-
-  test('offramp simulate (approval sufficient): valid, sendTransaction never called', async () => {
-    const account = {
-      getAddress: async () => '0xsender',
-      getAllowance: vi.fn(async () => 9999n),
-      sendTransaction: vi.fn(),
-      quoteSendTransaction: vi.fn(async () => ({ fee: 21000n })),
-    }
-    const client = fakeEvmClient()
-    const sw = new GatewaySwidge(account, { fromChain: 'base', client })
-    const result = await sw.simulateSwidge({
-      fromToken: '0xtok',
-      toToken: 'BTC',
-      toChain: 'bitcoin',
-      recipient: 'bc1qrcpt',
-      fromTokenAmount: 1000n,
-    })
-    expect(result.broadcast).toBe(false)
-    expect(result.variant).toBe('offramp')
-    expect('evm' in result).toBe(true)
-    if ('evm' in result) {
-      expect(result.evm.valid).toBe(true)
-      expect(result.evm.gasEstimate).toBe(21000n)
-      expect(result.evm.requiredApproval).toBeNull()
-    }
-    expect(account.sendTransaction).not.toHaveBeenCalled()
-    expect(client.registerTx).not.toHaveBeenCalled()
-  })
-
-  test('offramp simulate (approval missing / revert): valid: false, reason set, no throw', async () => {
-    const account = {
-      getAddress: async () => '0xsender',
-      getAllowance: vi.fn(async () => 0n),
-      sendTransaction: vi.fn(),
-      quoteSendTransaction: vi.fn(async () => {
-        throw new Error('execution reverted')
-      }),
-    }
-    const client = fakeEvmClient()
-    const sw = new GatewaySwidge(account, { fromChain: 'base', client })
-    // Must NOT throw
-    const result = await sw.simulateSwidge({
-      fromToken: '0xtok',
-      toToken: 'BTC',
-      toChain: 'bitcoin',
-      recipient: 'bc1qrcpt',
-      fromTokenAmount: 1000n,
-    })
-    expect(result.broadcast).toBe(false)
-    expect('evm' in result).toBe(true)
-    if ('evm' in result) {
-      expect(result.evm.valid).toBe(false)
-      expect(result.evm.reason).toBeTruthy()
-      expect(result.evm.requiredApproval).toEqual({
-        token: '0xtok',
-        spender: '0x0000000000001fF3684f28c67538d4D072C22734',
-        amount: MAX_UINT256,
-      })
-    }
-    expect(account.sendTransaction).not.toHaveBeenCalled()
-    expect(client.registerTx).not.toHaveBeenCalled()
-  })
-
-  test('offramp simulate from tron: fee quoted from the built call, approval reported', async () => {
-    const triggerSmartContract = vi.fn(
-      async (
-        to: string,
-        _selector: string,
-        options: { input: string; callValue: number; feeLimit: number },
-        _parameters: unknown[],
-        owner: string
-      ) => ({
-        transaction: buildTronTx({
-          to,
-          owner,
-          data: options.input,
-          callValue: options.callValue,
-          feeLimit: options.feeLimit,
-        }),
-      })
-    )
-    const account = {
-      getAddress: async () => OWNER,
-      sendTransaction: vi.fn(),
-      quoteSendTransaction: vi.fn(async () => ({ fee: 27_000_000n, activationFee: 0n })),
-      _tronWeb: {
-        transactionBuilder: {
-          triggerSmartContract,
-          // allowance() → 0, so the approval is still outstanding
-          triggerConstantContract: vi.fn(async () => ({ constant_result: ['0'.repeat(64)] })),
-        },
+    expect(registerTx).not.toHaveBeenCalled()
+    expect(result).toEqual({
+      variant: 'onramp',
+      orderId: 'order-onramp',
+      quote: SWIDGE_QUOTE,
+      broadcast: false,
+      onramp: {
+        signedTxHex: SIGNED_TX_HEX,
+        txid: SIGNED_TXID,
+        valid: true,
+        paidToDeposit: 50_000n,
       },
-    }
-    const client = fakeTronClient()
-    const sw = new GatewaySwidge(account, { fromChain: 'tron', client })
-    const result = await sw.simulateSwidge({
-      fromToken: USDT_TRON,
-      toToken: 'BTC',
-      toChain: 'bitcoin',
-      recipient: 'bc1qrcpt',
-      fromTokenAmount: 1_000_000n,
     })
-    expect(result.variant).toBe('offramp')
-    expect('tron' in result).toBe(true)
-    if ('tron' in result) {
-      expect(result.tron.valid).toBe(true)
-      expect(result.tron.feeEstimate).toBe(27_000_000n)
-      expect(result.tron.requiredApproval).toEqual({
-        token: USDT_TRON,
-        spender: REGISTRY,
-        amount: MAX_UINT256,
-      })
+  })
+
+  test('a signed transaction that underpays the deposit address is not valid', async () => {
+    const account = new DummyBtcAccount()
+    account.signTransaction.mockResolvedValue(UNDERPAYING_TX_HEX)
+    const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
+
+    const { onramp } = (await sw.simulateSwidge(ONRAMP)) as { onramp: unknown }
+
+    expect(onramp).toEqual({
+      signedTxHex: UNDERPAYING_TX_HEX,
+      txid: UNDERPAYING_TXID,
+      valid: false,
+      paidToDeposit: 49_999n,
+    })
+  })
+
+  test('an account that cannot sign is NOT_SUPPORTED', async () => {
+    const sw = new GatewaySwidge({ getAddress: async () => BTC_SENDER } as never, {
+      fromChain: 'bitcoin',
+      client,
+    })
+
+    await expect(sw.simulateSwidge(ONRAMP)).rejects.toMatchObject(
+      gatewayError(ERR.NOT_SUPPORTED, 'bitcoin account cannot sign transactions')
+    )
+  })
+})
+
+describe('simulateSwidge: EVM offramp', () => {
+  class DummyEvmAccount {
+    getAllowance = vi.fn()
+    quoteSendTransaction: ReturnType<typeof vi.fn> | undefined = vi.fn()
+    sendTransaction = vi.fn()
+    async getAddress() {
+      return '0xsender'
     }
-    expect(account.quoteSendTransaction).toHaveBeenCalled()
+  }
+
+  const OFFRAMP = {
+    fromToken: USDT_BASE,
+    toToken: 'BTC',
+    toChain: 'bitcoin',
+    recipient: 'bc1qrcpt',
+    fromTokenAmount: 100_000_000n,
+  }
+  const ORDER_TX = { to: ALLOWANCE_HOLDER, data: '0x2213bc0b', value: '0' }
+  const APPROVAL = { token: USDT_BASE, spender: ALLOWANCE_HOLDER, amount: MAX_UINT256 }
+
+  /** `SwidgeQuote` for `offrampQuote()`: 133315 × (1 − 50 bps) = 132648. */
+  const SWIDGE_QUOTE = {
+    fromTokenAmount: 100_000_000n,
+    toTokenAmount: 133_315n,
+    toTokenAmountMin: 132_648n,
+    fees: [
+      {
+        type: 'network',
+        amount: 995n,
+        token: USDT_ETHEREUM,
+        chain: 'ethereum',
+        included: true,
+        description: 'Solver fee',
+      },
+      {
+        type: 'network',
+        amount: 880n,
+        token: ZERO,
+        chain: 'bitcoin',
+        included: true,
+        description: 'Bitcoin transaction inclusion fee',
+      },
+    ],
+    estimatedDuration: 648,
+    priceImpact: -0.0045,
+    affiliateApplied: false,
+  }
+
+  beforeEach(() => {
+    getQuote.mockResolvedValue(offrampQuote())
+    createOrder.mockResolvedValue(offrampOrder())
+  })
+
+  test('quotes the order tx without sending it, and needs no approval once the allowance covers it', async () => {
+    const account = new DummyEvmAccount()
+    account.getAllowance.mockResolvedValue(100_000_000n)
+    account.quoteSendTransaction!.mockResolvedValue({ fee: 21_000n })
+    const sw = new GatewaySwidge(account as never, { fromChain: 'base', client })
+
+    const result = await sw.simulateSwidge(OFFRAMP)
+
+    expect(account.getAllowance).toHaveBeenCalledWith(USDT_BASE, ALLOWANCE_HOLDER)
+    expect(account.quoteSendTransaction).toHaveBeenCalledWith(ORDER_TX)
     expect(account.sendTransaction).not.toHaveBeenCalled()
-    expect(client.registerTx).not.toHaveBeenCalled()
+    expect(registerTx).not.toHaveBeenCalled()
+    expect(result).toEqual({
+      variant: 'offramp',
+      orderId: 'order-offramp',
+      quote: SWIDGE_QUOTE,
+      broadcast: false,
+      evm: { tx: ORDER_TX, gasEstimate: 21_000n, requiredApproval: null, valid: true },
+    })
+  })
+
+  test('reports the approval still due when the allowance falls short', async () => {
+    const account = new DummyEvmAccount()
+    account.getAllowance.mockResolvedValue(50n)
+    account.quoteSendTransaction!.mockResolvedValue({ fee: 21_000n })
+    const sw = new GatewaySwidge(account as never, { fromChain: 'base', client })
+
+    const { evm } = (await sw.simulateSwidge(OFFRAMP)) as { evm: unknown }
+
+    expect(evm).toEqual({
+      tx: ORDER_TX,
+      gasEstimate: 21_000n,
+      requiredApproval: APPROVAL,
+      valid: true,
+    })
+  })
+
+  test('a reverting quote is valid: false with the reason, not a throw', async () => {
+    const account = new DummyEvmAccount()
+    account.getAllowance.mockResolvedValue(0n)
+    account.quoteSendTransaction!.mockRejectedValue(
+      new Error('execution reverted: insufficient allowance')
+    )
+    const sw = new GatewaySwidge(account as never, { fromChain: 'base', client })
+
+    const { evm } = (await sw.simulateSwidge(OFFRAMP)) as { evm: unknown }
+
+    expect(evm).toEqual({
+      tx: ORDER_TX,
+      gasEstimate: null,
+      requiredApproval: APPROVAL,
+      valid: false,
+      reason: 'execution reverted: insufficient allowance',
+    })
+  })
+
+  test('a failing allowance read is valid: false with the reason, before quoting', async () => {
+    const account = new DummyEvmAccount()
+    account.getAllowance.mockRejectedValue(new Error('node unreachable'))
+    const sw = new GatewaySwidge(account as never, { fromChain: 'base', client })
+
+    const { evm } = (await sw.simulateSwidge(OFFRAMP)) as { evm: unknown }
+
+    expect(account.quoteSendTransaction).not.toHaveBeenCalled()
+    expect(evm).toEqual({
+      tx: ORDER_TX,
+      gasEstimate: null,
+      requiredApproval: null,
+      valid: false,
+      reason: 'node unreachable',
+    })
+  })
+
+  test('an account without quoteSendTransaction is NOT_SUPPORTED', async () => {
+    const account = new DummyEvmAccount()
+    account.quoteSendTransaction = undefined
+    const sw = new GatewaySwidge(account as never, { fromChain: 'base', client })
+
+    await expect(sw.simulateSwidge(OFFRAMP)).rejects.toMatchObject(
+      gatewayError(ERR.NOT_SUPPORTED, 'evm account does not support quoteSendTransaction')
+    )
+  })
+
+  test('carries a USDT-on-Ethereum allowance reset through to the approval', async () => {
+    const quote = offrampQuote()
+    quote.offramp.srcChain = 'ethereum'
+    quote.offramp.inputAmount.chain = 'ethereum'
+    quote.offramp.inputAmount.address = USDT_ETHEREUM
+    getQuote.mockResolvedValue(quote)
+    const account = new DummyEvmAccount()
+    account.getAllowance.mockResolvedValue(100n)
+    account.quoteSendTransaction!.mockResolvedValue({ fee: 21_000n })
+    const sw = new GatewaySwidge(account as never, { fromChain: 'ethereum', client })
+
+    const { evm } = (await sw.simulateSwidge({ ...OFFRAMP, fromToken: USDT_ETHEREUM })) as {
+      evm: unknown
+    }
+
+    expect(evm).toEqual({
+      tx: ORDER_TX,
+      gasEstimate: 21_000n,
+      requiredApproval: {
+        token: USDT_ETHEREUM,
+        spender: ALLOWANCE_HOLDER,
+        amount: MAX_UINT256,
+        resetRequired: true,
+      },
+      valid: true,
+    })
   })
 })
