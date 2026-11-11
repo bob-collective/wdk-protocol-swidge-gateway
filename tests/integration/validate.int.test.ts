@@ -1,0 +1,257 @@
+/**
+ * Gateway validation suite — mainnet, no swap.
+ *
+ * Validates quote responses and sign/simulate paths (GatewaySwidge.quoteSwidge +
+ * GatewaySwidge.simulateSwidge) without broadcasting any transaction.
+ *
+ * Gate: requires TEST_SEED in the environment. Without it the entire describe
+ * block is skipped and the test runner exits green (0 failed).
+ *
+ * Run locally:
+ *   op run --env-file=.env.op -- pnpm exec vitest run tests/integration
+ *
+ * Environment variables:
+ *   TEST_SEED       — BIP-39 mnemonic (required)
+ *   EVM_RPC_URL     — JSON-RPC endpoint for Ethereum (default: https://ethereum-rpc.publicnode.com)
+ *   TRON_RPC_URL    — Tron full-node endpoint (default: https://tron-rpc.publicnode.com)
+ *   AMOUNT_SATS     — BTC onramp amount in satoshis (default: 30000, ~$30 — fits a $50 test wallet with fee headroom)
+ *   AMOUNT_USDT     — USDT offramp amount in smallest unit (default: 50000000 = 50 USDT)
+ *   AMOUNT_ETH      — native ETH offramp amount in wei (default: 2e16 = 0.02 ETH; simulated only)
+ */
+
+import { describe, test, expect } from 'vitest'
+import type { WalletAccountBtc } from '@tetherto/wdk-wallet-btc'
+import type { WalletAccountEvm } from '@tetherto/wdk-wallet-evm'
+import type { WalletAccountTron } from '@tetherto/wdk-wallet-tron'
+
+const RUN = !!process.env.TEST_SEED
+
+// All test work is inside the conditional describe so that, when TEST_SEED is absent,
+// no WDK modules are imported and no network calls are attempted.
+;(RUN ? describe : describe.skip)(
+  'gateway validation (mainnet, no swap)',
+  { timeout: 120_000 },
+  () => {
+    const USDT_ETHEREUM = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
+    const USDT_TRON = 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t'
+    const BTC_ZERO = '0x0000000000000000000000000000000000000000'
+    const EVM_RPC = process.env.EVM_RPC_URL ?? 'https://ethereum-rpc.publicnode.com'
+    const TRON_RPC = process.env.TRON_RPC_URL ?? 'https://tron-rpc.publicnode.com'
+    const AMOUNT_SATS = BigInt(process.env.AMOUNT_SATS ?? '30000')
+    const AMOUNT_USDT = BigInt(process.env.AMOUNT_USDT ?? '50000000')
+    // Above the gateway's native offramp minimum (~0.01 ETH); never spent, so no balance needed.
+    const AMOUNT_ETH = BigInt(process.env.AMOUNT_ETH ?? '20000000000000000')
+
+    // Lazily resolved — only populated once the first test runs.
+    let btcAddress: string
+    let evmAddress: string
+    let tronAddress: string
+    let btcAccount: WalletAccountBtc
+    let evmAccount: WalletAccountEvm
+    let tronAccount: WalletAccountTron
+
+    // Shared setup: derive accounts from the seed once before all tests.
+    // We do this inside a test rather than beforeAll so that import errors surface
+    // as a clear test failure rather than a mysterious setup error.
+    test('setup: derive BTC + EVM + Tron accounts from TEST_SEED', async () => {
+      const seed = process.env.TEST_SEED!
+      const { default: WalletManagerBtc } = await import('@tetherto/wdk-wallet-btc')
+      const { default: WalletManagerEvm } = await import('@tetherto/wdk-wallet-evm')
+      const { default: WalletManagerTron } = await import('@tetherto/wdk-wallet-tron')
+
+      const btcWallet = new WalletManagerBtc(seed, { network: 'bitcoin' })
+      btcAccount = await btcWallet.getAccount(0)
+      btcAddress = await btcAccount.getAddress()
+
+      const evmWallet = new WalletManagerEvm(seed, { provider: EVM_RPC })
+      evmAccount = await evmWallet.getAccount(0)
+      evmAddress = await evmAccount.getAddress()
+
+      const tronWallet = new WalletManagerTron(seed, { provider: TRON_RPC })
+      tronAccount = await tronWallet.getAccount(0)
+      tronAddress = await tronAccount.getAddress()
+
+      expect(btcAddress).toMatch(/^bc1/)
+      expect(evmAddress).toMatch(/^0x/)
+      expect(tronAddress).toMatch(/^T/)
+    })
+
+    // ── quoteSwidge conformance ──────────────────────────────────────────────
+
+    test('quoteSwidge: onramp BTC → USDT@ethereum', async () => {
+      const { GatewaySwidge } = await import('../../src/index.js')
+      const sw = new GatewaySwidge(btcAccount, { fromChain: 'bitcoin' })
+      const quote = await sw.quoteSwidge({
+        fromToken: BTC_ZERO,
+        toToken: USDT_ETHEREUM,
+        toChain: 'ethereum',
+        recipient: evmAddress,
+        fromTokenAmount: AMOUNT_SATS,
+      })
+      expect(quote.toTokenAmount).toBeGreaterThan(0n)
+      expect(Array.isArray(quote.fees)).toBe(true)
+    })
+
+    test('quoteSwidge: offramp USDT@ethereum → BTC', async () => {
+      const { GatewaySwidge } = await import('../../src/index.js')
+      const sw = new GatewaySwidge(evmAccount, { fromChain: 'ethereum' })
+      const quote = await sw.quoteSwidge({
+        fromToken: USDT_ETHEREUM,
+        toToken: BTC_ZERO,
+        toChain: 'bitcoin',
+        recipient: btcAddress,
+        fromTokenAmount: AMOUNT_USDT,
+      })
+      expect(quote.toTokenAmount).toBeGreaterThan(0n)
+      expect(Array.isArray(quote.fees)).toBe(true)
+    })
+
+    // ── simulateSwidge onramp ────────────────────────────────────────────────
+
+    test('simulateSwidge: onramp BTC → USDT@ethereum — broadcast false, pays exactly AMOUNT_SATS', async () => {
+      const { GatewaySwidge } = await import('../../src/index.js')
+      const sw = new GatewaySwidge(btcAccount, { fromChain: 'bitcoin' })
+      const sim = await sw.simulateSwidge({
+        fromToken: BTC_ZERO,
+        toToken: USDT_ETHEREUM,
+        toChain: 'ethereum',
+        recipient: evmAddress,
+        fromTokenAmount: AMOUNT_SATS,
+      })
+      expect(sim.broadcast).toBe(false)
+      expect('onramp' in sim).toBe(true)
+      if (!('onramp' in sim)) return
+      expect(sim.onramp.valid).toBe(true)
+      expect(sim.onramp.paidToDeposit).toBe(AMOUNT_SATS)
+    })
+
+    // ── simulateSwidge offramp ───────────────────────────────────────────────
+
+    test('simulateSwidge: offramp USDT@ethereum → BTC — broadcast false; valid or requiredApproval present', async () => {
+      const { GatewaySwidge } = await import('../../src/index.js')
+      const sw = new GatewaySwidge(evmAccount, { fromChain: 'ethereum' })
+      const sim = await sw.simulateSwidge({
+        fromToken: USDT_ETHEREUM,
+        toToken: BTC_ZERO,
+        toChain: 'bitcoin',
+        recipient: btcAddress,
+        fromTokenAmount: AMOUNT_USDT,
+      })
+      expect(sim.broadcast).toBe(false)
+      expect('evm' in sim).toBe(true)
+      if (!('evm' in sim)) return
+
+      const { valid, requiredApproval } = sim.evm
+      const approvalNeeded = !valid && requiredApproval !== null
+
+      expect(valid || approvalNeeded).toBe(true)
+
+      if (!valid && approvalNeeded) {
+        expect(requiredApproval).toMatchObject({
+          token: USDT_ETHEREUM,
+          spender: expect.stringMatching(/^0x/),
+          amount: expect.any(BigInt),
+        })
+      }
+    })
+
+    // A native source is wrapped in the same exec() as an ERC-20 one — zero-address token, the
+    // amount paid as `value` — which the order guard relies on. Catches the gateway changing that
+    // shape. No balance needed: the guard runs before simulate, which reports a failed estimate
+    // as `valid: false` rather than throwing.
+    test('simulateSwidge: offramp ETH@ethereum → BTC — native-source order passes the order guard', async () => {
+      const { GatewaySwidge } = await import('../../src/index.js')
+      const sw = new GatewaySwidge(evmAccount, { fromChain: 'ethereum' })
+      const sim = await sw.simulateSwidge({
+        fromToken: BTC_ZERO,
+        toToken: BTC_ZERO,
+        toChain: 'bitcoin',
+        recipient: btcAddress,
+        fromTokenAmount: AMOUNT_ETH,
+      })
+      expect(sim.broadcast).toBe(false)
+      if (!('evm' in sim)) throw new Error('expected an evm simulation')
+      expect(sim.evm.tx.value).toBe(String(AMOUNT_ETH))
+      expect(sim.evm.requiredApproval).toBeNull()
+    })
+
+    // ── Tron as source ───────────────────────────────────────────────────────
+
+    test('quoteSwidge: offramp USDT@tron → BTC', async () => {
+      const { GatewaySwidge } = await import('../../src/index.js')
+      const sw = new GatewaySwidge(tronAccount, { fromChain: 'tron' })
+      const quote = await sw.quoteSwidge({
+        fromToken: USDT_TRON,
+        toToken: BTC_ZERO,
+        toChain: 'bitcoin',
+        recipient: btcAddress,
+        fromTokenAmount: AMOUNT_USDT,
+      })
+      expect(quote.toTokenAmount).toBeGreaterThan(0n)
+      expect(Array.isArray(quote.fees)).toBe(true)
+    })
+
+    test('simulateSwidge: offramp USDT@tron → BTC — tron payload, valid or requiredApproval present', async () => {
+      const { GatewaySwidge } = await import('../../src/index.js')
+      const sw = new GatewaySwidge(tronAccount, { fromChain: 'tron' })
+      const sim = await sw.simulateSwidge({
+        fromToken: USDT_TRON,
+        toToken: BTC_ZERO,
+        toChain: 'bitcoin',
+        recipient: btcAddress,
+        fromTokenAmount: AMOUNT_USDT,
+      })
+      expect(sim.broadcast).toBe(false)
+      expect('tron' in sim).toBe(true)
+      if (!('tron' in sim)) return
+
+      const { valid, requiredApproval, tx, reason } = sim.tron
+      expect(tx.to).toMatch(/^T/)
+      if (!valid) {
+        expect(requiredApproval).not.toBeNull()
+        expect(reason).toBeDefined()
+        expect(reason).not.toMatch(
+          /no tron provider|fetch failed|ECONN|ENOTFOUND|EAI_AGAIN|timeout|socket hang up/i
+        )
+      }
+
+      if (requiredApproval) {
+        expect(requiredApproval).toMatchObject({
+          token: USDT_TRON,
+          spender: expect.stringMatching(/^T/),
+          amount: expect.any(BigInt),
+        })
+        const { buildTronApproval } = await import('../../src/index.js')
+        const approvalCall = buildTronApproval(requiredApproval)
+        await expect(tronAccount.quoteSendTransaction(approvalCall)).resolves.toMatchObject({
+          fee: expect.anything(),
+        })
+      }
+    })
+
+    // getSupportedTokens() omits tokens missing from src/tokens.ts, and getSupportedChains() gives
+    // unknown chains no native token — so a route the gateway adds must land in both tables.
+    test('every live route chain and token has metadata (else: pnpm gen:tokens)', async () => {
+      const { GatewayClient } = await import('../../src/index.js')
+      const { CHAINS } = await import('../../src/chains.js')
+      const { TOKENS } = await import('../../src/tokens.js')
+      const { tokenKey } = await import('../../src/map/routes.js')
+      const routes = (await new GatewayClient().getRoutes()) as {
+        srcChain: string
+        dstChain: string
+        srcToken: string
+        dstToken: string
+      }[]
+      expect(routes.length).toBeGreaterThan(0)
+      const pairs = routes.flatMap((r) => [
+        [r.srcChain, r.srcToken],
+        [r.dstChain, r.dstToken],
+      ])
+      const missingChains = [...new Set(pairs.map(([c]) => c))].filter((c) => !CHAINS[c])
+      const missingTokens = [...new Set(pairs.map(([c, t]) => tokenKey(c, t)))].filter(
+        (k) => !TOKENS[k]
+      )
+      expect({ missingChains, missingTokens }).toEqual({ missingChains: [], missingTokens: [] })
+    })
+  }
+)

@@ -1,0 +1,108 @@
+{
+  "name": "@gobob/wdk-protocol-swidge-gateway",
+  "version": "0.4.1",
+  "description": "Swap native BTC ⇄ USDT, USDC, ETH, wBTC, cbBTC, XAUT & tokenized stocks across Bitcoin, Ethereum, Base, Arbitrum, BSC, Tron, Robinhood Chain & more — BOB Gateway swidge module for the Tether Wallet Development Kit (WDK).",
+  "type": "module",
+  "author": "BOB",
+  "homepage": "https://github.com/bob-collective/wdk-protocol-swidge-gateway#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bob-collective/wdk-protocol-swidge-gateway.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bob-collective/wdk-protocol-swidge-gateway/issues"
+  },
+  "keywords": [
+    "bitcoin",
+    "btc",
+    "usdt",
+    "usdc",
+    "eth",
+    "wbtc",
+    "cbbtc",
+    "xaut",
+    "stablecoin",
+    "swap",
+    "bridge",
+    "swidge",
+    "cross-chain",
+    "onramp",
+    "offramp",
+    "ethereum",
+    "base",
+    "arbitrum",
+    "bsc",
+    "tron",
+    "robinhood",
+    "tokenized-stocks",
+    "wdk",
+    "wdk-module",
+    "tether",
+    "bob",
+    "bob-gateway",
+    "self-custody"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "packageManager": "pnpm@10.34.4",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bare": "./bare.js",
+      "default": "./dist/index.js"
+    },
+    "./package": "./package.json"
+  },
+  "files": [
+    "dist",
+    "bare.js"
+  ],
+  "scripts": {
+    "audit": "pnpm audit --prod",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "verify:consumer": "pnpm build && node scripts/verify-consumer.mjs",
+    "test:bare": "pnpm build && bare scripts/bare-smoke.mjs",
+    "derive-addresses": "tsx scripts/derive-addresses.ts",
+    "execute-swap": "tsx scripts/execute-swap.ts",
+    "gen:tokens": "tsx scripts/gen-tokens.ts && prettier --write src/tokens.ts"
+  },
+  "dependencies": {
+    "@bitcoinerlab/secp256k1": "2.0.0",
+    "bare-node-runtime": "^1.5.3",
+    "bitcoinjs-lib": "6.1.10",
+    "tronweb": "6.5.1"
+  },
+  "peerDependencies": {
+    "@tetherto/wdk-wallet": ">=1.0.0-beta.17 <2.0.0"
+  },
+  "devDependencies": {
+    "@tetherto/wdk": "1.0.0-beta.22",
+    "@tetherto/wdk-wallet": "1.0.0-beta.25",
+    "@tetherto/wdk-wallet-btc": "1.0.0-beta.17",
+    "@tetherto/wdk-wallet-evm": "1.0.0-beta.24",
+    "@tetherto/wdk-wallet-evm-erc-4337": "1.0.0-beta.24",
+    "@tetherto/wdk-wallet-tron": "1.0.0-beta.17",
+    "@typescript-eslint/eslint-plugin": "8.72.1",
+    "@typescript-eslint/parser": "8.72.1",
+    "bare-runtime": "1.36.0",
+    "eslint": "10.14.0",
+    "eslint-config-prettier": "10.1.8",
+    "ethers": "6.17.0",
+    "prettier": "3.9.10",
+    "require-asset": "1.2.4",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  },
+  "license": "Apache-2.0"
+}
