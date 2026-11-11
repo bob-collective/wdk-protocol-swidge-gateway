@@ -16,7 +16,7 @@ The Wallet Development Kit (WDK) is a modular framework for building non-custodi
 - **Affiliate fees**: Earn revenue on BTC ↔ EVM routes with configurable per-address basis-point fees.
 - **Zero-config attribution**: The default `bearerToken` attributes gateway-wdk volume to BOB at 0 fee.
 - **Non-custodial**: Keys never leave the WDK account. Signing is fully delegated.
-- **Multi-runtime**: Works on Node.js, Bare (`bare.js`), and React Native out of the box.
+- **Multi-runtime**: Works on Node.js, Bare (`bare.js` — CI loads it under the Bare runtime with `pnpm test:bare`), and React Native out of the box.
 
 ## ⬇️ Installation
 

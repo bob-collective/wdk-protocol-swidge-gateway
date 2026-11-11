@@ -38,3 +38,5 @@ jobs:
       # Packs the tarball and installs it alongside @tetherto/wdk in a throwaway consumer tree.
       # Catches base-class identity breaks that the in-repo suite structurally cannot see.
       - run: pnpm verify:consumer
+      # Loads the package under the Bare runtime through its `bare` export condition (bare.js).
+      - run: pnpm test:bare
