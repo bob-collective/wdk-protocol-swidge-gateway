@@ -149,6 +149,24 @@ describe('swidge: onramp', () => {
     )
   })
 
+  test.each([
+    ['a testnet address', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx'],
+    ['no address', 'not-an-address'],
+  ])('refuses a deposit address that is %s before signing', async (_label, address) => {
+    createOrder.mockResolvedValue({ onramp: { order_id: 'order-onramp', address } })
+    const account = new DummyBtcAccount()
+    const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
+
+    await expect(sw.swidge(ONRAMP)).rejects.toMatchObject(
+      gatewayError(
+        ERR.VALIDATION,
+        `order deposit address is not a Bitcoin mainnet address: ${address}`
+      )
+    )
+    expect(account.signTransaction).not.toHaveBeenCalled()
+    expect(registerTx).not.toHaveBeenCalled()
+  })
+
   test('accepts the register-tx txid in upper case and with an 0x prefix', async () => {
     registerTx.mockResolvedValue({ onramp: { txid: `0x${SIGNED_TXID.toUpperCase()}` } })
     const sw = new GatewaySwidge(new DummyBtcAccount() as never, { fromChain: 'bitcoin', client })

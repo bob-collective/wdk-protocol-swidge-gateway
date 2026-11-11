@@ -167,6 +167,21 @@ describe('getSwidgeStatus', () => {
     expect(result).toEqual(expected)
   })
 
+  test.each([
+    ['an unknown variant', { settling: {} }, 'settling'],
+    ['no variant', {}, 'none'],
+    ['no status object', null, 'none'],
+  ])('refuses an order with %s instead of reading it as pending', async (_label, status, keys) => {
+    getOrder.mockResolvedValue({ id: ORDER_ID, timestamp: 0, srcInfo: SRC_INFO, status })
+
+    await expect(gatewaySwidge().getSwidgeStatus(ORDER_ID)).rejects.toMatchObject({
+      name: 'GatewaySwidgeError',
+      code: 'GATEWAY_HTTP_ERROR',
+      message: `gateway order ${ORDER_ID} has an unknown status: ${keys}`,
+      cause: status,
+    })
+  })
+
   test('a source transaction not yet indexed is left out', async () => {
     getOrder.mockResolvedValue({
       id: ORDER_ID,

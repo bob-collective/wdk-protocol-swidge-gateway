@@ -1,8 +1,9 @@
 // simulateSwidge() on Bitcoin and EVM source routes: everything swidge() does short of
 // broadcasting. Tron routes are covered in tron.test.ts.
 import { beforeEach, describe, test, expect, vi } from 'vitest'
-import { AccountRequiredError, GatewaySwidge } from '../src/index.js'
+import { AccountRequiredError, ERR, GatewaySwidge } from '../src/index.js'
 import type { GatewayClient } from '../src/index.js'
+import { gatewayError } from './helpers.js'
 import {
   ALLOWANCE_HOLDER,
   BTC_SENDER,
@@ -18,6 +19,8 @@ import {
   onrampQuote,
 } from './fixtures/gateway.js'
 import {
+  OVERPAYING_TXID,
+  OVERPAYING_TX_HEX,
   SIGNED_TXID,
   SIGNED_TX_HEX,
   UNDERPAYING_TXID,
@@ -108,28 +111,42 @@ describe('simulateSwidge: onramp', () => {
       orderId: 'order-onramp',
       quote: SWIDGE_QUOTE,
       broadcast: false,
-      onramp: {
-        signedTxHex: SIGNED_TX_HEX,
-        txid: SIGNED_TXID,
-        valid: true,
-        paidToDeposit: 50_000n,
-      },
+      // No signedTxHex: it pays a real order's deposit address, so it must not leak from a dry run.
+      onramp: { txid: SIGNED_TXID, valid: true, paidToDeposit: 50_000n },
     })
   })
 
-  test('a signed transaction that underpays the deposit address is not valid', async () => {
+  test.each([
+    ['underpays', UNDERPAYING_TX_HEX, UNDERPAYING_TXID, 49_999n],
+    ['overpays', OVERPAYING_TX_HEX, OVERPAYING_TXID, 50_001n],
+  ])(
+    'a signed transaction that %s the deposit address is not valid',
+    async (_label, signedTxHex, txid, paidToDeposit) => {
+      const account = new DummyBtcAccount()
+      account.signTransaction.mockResolvedValue(signedTxHex)
+      const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
+
+      const { onramp } = (await sw.simulateSwidge(ONRAMP)) as { onramp: unknown }
+
+      expect(onramp).toEqual({ txid, valid: false, paidToDeposit })
+    }
+  )
+
+  test.each([
+    ['a testnet address', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx'],
+    ['no address', 'not-an-address'],
+  ])('refuses a deposit address that is %s before signing', async (_label, address) => {
+    createOrder.mockResolvedValue({ onramp: { order_id: 'order-onramp', address } })
     const account = new DummyBtcAccount()
-    account.signTransaction.mockResolvedValue(UNDERPAYING_TX_HEX)
     const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
 
-    const { onramp } = (await sw.simulateSwidge(ONRAMP)) as { onramp: unknown }
-
-    expect(onramp).toEqual({
-      signedTxHex: UNDERPAYING_TX_HEX,
-      txid: UNDERPAYING_TXID,
-      valid: false,
-      paidToDeposit: 49_999n,
-    })
+    await expect(sw.simulateSwidge(ONRAMP)).rejects.toMatchObject(
+      gatewayError(
+        ERR.VALIDATION,
+        `order deposit address is not a Bitcoin mainnet address: ${address}`
+      )
+    )
+    expect(account.signTransaction).not.toHaveBeenCalled()
   })
 
   test('an account that cannot sign is refused before any gateway call', async () => {
