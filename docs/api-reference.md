@@ -30,7 +30,9 @@ new GatewaySwidge(account, config?)
 | Parameter               | Type                                    | Default             | Description                                                                                        |
 | ----------------------- | --------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
 | `account`               | `object`                                | —                   | WDK wallet account (BTC, EVM or Tron).                                                             |
-| `config.apiUrl`         | `string`                                | BOB Gateway mainnet | Gateway API base URL.                                                                              |
+| `config.apiUrl`         | `string`                                | BOB Gateway mainnet | Gateway API base URL. Must be `https:`; plain `http:` only on `localhost`, `127.0.0.1` and `[::1]`, else `ValueError`. The default transport refuses redirects, so an `https:` → `http:` redirect cannot bypass this. |
+| `config.allowInsecureApiUrl` | `boolean`                         | `false`             | Accept a plain-`http:` `apiUrl` on any host, for test setups. Never against a real gateway: over plain HTTP a network attacker can replace the onramp's BTC deposit address, which no check can pin. |
+| `config.timeoutMs`      | `number`                                | `30000`             | Limit on each gateway request attempt, response body included, in ms; at most `60000` (else `ValueError`). A request that runs over is aborted and retried as transient (up to 3 retries), then throws `GATEWAY_HTTP_ERROR`. Ignored when `config.http` is set. |
 | `config.bearerToken`    | `string`                                | BOB attribution key | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee).                           |
 | `config.http`           | `object`                                | —                   | Injectable HTTP transport (for tests).                                                             |
 | `config.affiliates`     | `Array<{address: string, bps: number}>` | —                   | Affiliate fee entries.                                                                             |
@@ -122,6 +124,8 @@ Returns the current status of an order by the `id` from `SwidgeResult`.
 | `status`       | `string`              | `pending`, `completed`, `failed`, `refund-pending` or `refunded`.                                                                                             |
 | `transactions` | `SwidgeTransaction[]` | Every hash the order exposes, as `{ hash, chain, type }`: the `source` tx once indexed, `destination` payouts once completed, `refund` txs once refunded.   |
 
+An empty or non-JSON get-order response, or a gateway status other than `success`, `refunded`, `failed` or `inProgress`, throws `GatewaySwidgeError` `GATEWAY_HTTP_ERROR` instead of being read as `pending`.
+
 #### `getSupportedChains() → Promise<SwidgeSupportedChain[]>`
 
 Returns all supported source and destination chains, with a display `name`, VM `type` (`utxo`, `evm`, `tvm`, `svm`) and `nativeToken` symbol from a built-in chain table. A chain the table doesn't know yet gets its raw id as name and an empty `nativeToken`.
@@ -157,6 +161,10 @@ Turns a `getRequiredApproval()` result into a `TronSmartContractCall` that `Wall
 | `approval`         | `{ token: string, spender: string, amount: bigint }` | The approval returned by `getRequiredApproval()`.                                       |
 | `options.feeLimit` | `number?`                                            | Max sun to burn on the approve call (default 100 TRX). Must be a positive safe integer. |
 
+#### `simulateSwidge()` on Bitcoin
+
+`onramp` is `{ txid, valid, paidToDeposit }`: the txid of the signed transaction, whether it pays the order's deposit address exactly the quoted amount, and the sats it pays there. The signed transaction itself is not returned — it pays a real order's deposit address, so anyone holding it could broadcast it. The deposit address must be a standard Bitcoin mainnet address (p2pkh, p2sh, p2wpkh, p2wsh or p2tr; a witness v2+ "future segwit" address, which anyone can spend today, is refused), or `simulateSwidge()` (and `swidge()`) throw `VALIDATION_ERROR` before signing.
+
 #### `simulateSwidge()` on Tron
 
 `tron.valid` means the full node accepted and pre-executed the contract call while building it — not that the fee or the account's resources were checked. Unlike the EVM leg, an account without `quoteSendTransaction` is not an error here: the build itself is the execution check, so `valid` is still meaningful and the missing fee is reported as `feeEstimate: null`.
@@ -169,6 +177,8 @@ Turns a `getRequiredApproval()` result into a `TronSmartContractCall` that `Wall
 | `bridge(options)`      | Cross-chain EVM bridge.     |
 | `quoteSwap(options)`   | Quote a same-chain swap.    |
 | `quoteBridge(options)` | Quote a cross-chain bridge. |
+
+`bridge()`/`quoteBridge()` send the same `token` as both `fromToken` and `toToken`, so they only move a token whose address is the same on both chains, or a native coin between chains that share it (ETH from Ethereum to Arbitrum). Most ERC-20s have a different address per chain; bridge those with `swidge()` and the destination's address as `toToken`. Between chains with different native coins the zero address quotes a swap instead — `bridge({ token: ZERO, targetChain: 'bsc', … })` from Ethereum sells ETH for BNB — and `BridgeResult` does not say which token arrived.
 
 Affiliate fees are **not** applied on EVM↔EVM routes (dropped gracefully; `affiliateApplied: false` in the quote).
 

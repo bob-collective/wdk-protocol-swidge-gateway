@@ -1,8 +1,32 @@
-import { createDefaultTransport } from './http.js'
+import { ValueError } from '@tetherto/wdk-wallet/protocols'
+import { MAX_TIMEOUT_MS, createDefaultTransport } from './http.js'
 import type { HttpTransport } from './http.js'
 import { GatewaySwidgeError, ERR } from './errors.js'
 
 const DEFAULT_API = 'https://gateway-api-mainnet.gobob.xyz'
+
+/** Hosts a plain-`http:` `apiUrl` may name without opting in: local mock gateways. */
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]'])
+
+/**
+ * Refuses an `apiUrl` that is not `https:`, except on loopback or when opted in. Over plain HTTP a
+ * network attacker could swap the onramp's BTC deposit address in the create-order response, and
+ * that address cannot be pinned.
+ */
+function assertSecureApiUrl(apiUrl: string, allowInsecure: boolean): void {
+  let url: URL
+  try {
+    url = new URL(apiUrl)
+  } catch {
+    throw new ValueError('apiUrl is not a valid URL')
+  }
+  if (url.protocol === 'https:') return
+  if (url.protocol === 'http:' && (allowInsecure || LOOPBACK.has(url.hostname))) return
+  throw new ValueError(
+    `apiUrl must be https: (plain http: only on localhost, or with allowInsecureApiUrl), got ` +
+      `${url.protocol}//${url.host}`
+  )
+}
 
 // Transient errors that are safe to retry — mirrors gateway-cli's swap.ts retry patterns.
 const TRANSIENT = [
@@ -52,6 +76,18 @@ export interface GatewayClientConfig {
   http?: HttpTransport
   /** Retries of a transient failure per request, with linear backoff (default: 3). */
   maxRetries?: number
+  /**
+   * Limit on each request attempt, response body included, in milliseconds (default: 30000; at
+   * most 60000). An attempt that runs over is aborted and retried as transient, so a call can
+   * take up to `maxRetries + 1` times this. Ignored when `http` is set.
+   */
+  timeoutMs?: number
+  /**
+   * Accept a plain-`http:` `apiUrl` on a host other than `localhost`/`127.0.0.1`/`[::1]`, for
+   * test setups (default: false). Never set it against a real gateway: over plain HTTP a network
+   * attacker can replace the onramp's BTC deposit address.
+   */
+  allowInsecureApiUrl?: boolean
 }
 
 /**
@@ -68,13 +104,26 @@ export class GatewayClient {
    * Creates a gateway client.
    *
    * @param [config] - The client configuration.
+   * @throws {ValueError} If `config.apiUrl` is not a URL, or not `https:` — plain `http:` is
+   *   accepted only on `localhost`, `127.0.0.1` and `[::1]`, or with `allowInsecureApiUrl`.
+   * @throws {ValueError} If `config.timeoutMs` is not a positive integer of at most 60000.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if `config.http` is unset and the runtime has no
    *   global `fetch`.
    */
   constructor(config: GatewayClientConfig = {}) {
-    this._base = (config.apiUrl || DEFAULT_API).replace(/\/$/, '')
+    const apiUrl = config.apiUrl || DEFAULT_API
+    assertSecureApiUrl(apiUrl, config.allowInsecureApiUrl === true)
+    const { timeoutMs } = config
+    if (
+      timeoutMs !== undefined &&
+      !(Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= MAX_TIMEOUT_MS)
+    )
+      throw new ValueError(
+        `timeoutMs must be a positive integer up to ${MAX_TIMEOUT_MS}, got ${timeoutMs}`
+      )
+    this._base = apiUrl.replace(/\/$/, '')
     this._bearerToken = config.bearerToken
-    this._http = config.http || createDefaultTransport()
+    this._http = config.http || createDefaultTransport({ timeoutMs })
     this._maxRetries = config.maxRetries ?? 3
   }
 

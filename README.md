@@ -12,7 +12,7 @@ The Wallet Development Kit (WDK) is a modular framework for building non-custodi
 
 - **Native BTC ↔ EVM**: Bidirectional swidge — swap BTC ⇄ **USDT, USDC, ETH, wBTC, cbBTC, XAUT** across **Ethereum, Base, Arbitrum, BSC, Robinhood** and more.
 - **Native BTC ↔ Tron**: Bidirectional — send BTC and receive USDT on Tron, or spend TRC-20 USDT and receive native BTC.
-- **EVM ↔ EVM**: Same-chain swaps and cross-chain bridges via the inherited `swap()` / `bridge()` methods.
+- **EVM ↔ EVM**: Same-chain swaps and cross-chain bridges via `swidge()`, or the inherited `swap()` / `bridge()` methods (see [their limits](#inherited-methods)).
 - **Affiliate fees**: Earn revenue on BTC ↔ EVM routes with configurable per-address basis-point fees.
 - **Zero-config attribution**: The default `bearerToken` attributes gateway-wdk volume to BOB at 0 fee.
 - **Non-custodial**: Keys never leave the WDK account. Signing is fully delegated.
@@ -291,7 +291,9 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 | Parameter               | Type                                     | Description                                                                                                                                |
 | ----------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `account`               | `object`                                 | WDK wallet account (BTC, EVM or Tron).                                                                                                     |
-| `config.apiUrl`         | `string?`                                | Gateway API base URL.                                                                                                                      |
+| `config.apiUrl`         | `string?`                                | Gateway API base URL. Must be `https:`; plain `http:` is accepted only on `localhost`, `127.0.0.1` and `[::1]` (local mock gateways). The default transport refuses redirects.        |
+| `config.allowInsecureApiUrl` | `boolean?`                          | Accept a plain-`http:` `apiUrl` on any host, for test setups. Never against a real gateway: over plain HTTP a network attacker can replace the onramp's BTC deposit address. Default: `false`. |
+| `config.timeoutMs`      | `number?`                                | Limit on each gateway request attempt, response body included, in ms; at most `60000`. An attempt that runs over is aborted and retried as transient. Default: `30000`. Ignored when `config.http` is set. |
 | `config.bearerToken`    | `string?`                                | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee, attributes volume to BOB).                                         |
 | `config.http`           | `object?`                                | Injectable HTTP transport (useful for testing).                                                                                            |
 | `config.affiliates`     | `Array<{address: string, bps: number}>?` | Affiliate fee entries.                                                                                                                     |
@@ -346,7 +348,7 @@ For offramp and token-swap routes, call `getRequiredApproval()` and `approve()` 
 
 #### `getSwidgeStatus(id) → Promise<SwidgeStatusResult>`
 
-Polls order status by the `id` returned from `swidge()`. `transactions` lists the `source`, `destination` and `refund` hashes the order has so far, each with its `chain`.
+Polls order status by the `id` returned from `swidge()`. `transactions` lists the `source`, `destination` and `refund` hashes the order has so far, each with its `chain`. An empty get-order response, or a gateway status the module does not recognise, throws `GATEWAY_HTTP_ERROR` rather than reading as `pending`.
 
 #### `getSupportedChains() → Promise<SwidgeSupportedChain[]>`
 
@@ -368,7 +370,12 @@ On Tron the allowance is read with a constant-contract call through the resolved
 
 #### Inherited methods
 
-`swap(options)`, `bridge(options)`, `quoteSwap(options)`, `quoteBridge(options)` — inherited from `SwidgeProtocol` for EVM↔EVM routes.
+`swap(options)`, `bridge(options)`, `quoteSwap(options)`, `quoteBridge(options)` — inherited from `SwidgeProtocol`, which maps them onto `swidge()` / `quoteSwidge()`.
+
+`bridge()` / `quoteBridge()` pass the same `token` as both `fromToken` and `toToken`, which limits them to:
+
+- **ERC-20s with the same address on both chains.** Most tokens (USDC, USDT, …) have a different address per chain, so bridge them with `swidge()` and the destination chain's address as `toToken`.
+- **Native coins between chains with the same native coin** (e.g. ETH from Ethereum to Arbitrum). Between chains with different ones, the zero address quotes a swap into the destination's native coin instead: `bridge({ token: ZERO, targetChain: 'bsc', … })` from Ethereum sells ETH for BNB, and `BridgeResult` does not say which token arrived. Use `swidge()` with an explicit `toToken` for anything but a like-for-like move.
 
 ## 🌐 Supported Networks & Routes
 
@@ -377,7 +384,7 @@ On Tron the allowance is read with a constant-contract call through the resolved
 | BTC ↔ EVM chains | Bidirectional | Supports affiliate fees                                                               |
 | BTC ↔ Robinhood  | Bidirectional | EVM route; ETH, USDG, cbBTC and tokenized stock assets                                |
 | BTC ↔ Tron       | Bidirectional | Tron as source needs `@tetherto/wdk-wallet-tron` ≥ 1.0.0-beta.8 and a TRC-20 approval |
-| EVM ↔ EVM        | Bidirectional | Use `swap()` / `bridge()` (inherited). Affiliate fees not supported on this route.    |
+| EVM ↔ EVM        | Bidirectional | `swidge()`, or `swap()` / `bridge()` (inherited — see their limits above). Affiliate fees not supported on this route. |
 | Solana           | Coming soon   | Not available in v1                                                                   |
 
 ## Known Limitations & Integration Notes

@@ -108,7 +108,7 @@ const RUN = !!process.env.TEST_SEED
 
     // ── simulateSwidge onramp ────────────────────────────────────────────────
 
-    test('simulateSwidge: onramp BTC → USDT@ethereum — broadcast false, paidToDeposit ≥ AMOUNT_SATS', async () => {
+    test('simulateSwidge: onramp BTC → USDT@ethereum — broadcast false, pays exactly AMOUNT_SATS', async () => {
       const { GatewaySwidge } = await import('../../src/index.js')
       const sw = new GatewaySwidge(btcAccount, { fromChain: 'bitcoin' })
       const sim = await sw.simulateSwidge({
@@ -122,7 +122,7 @@ const RUN = !!process.env.TEST_SEED
       expect('onramp' in sim).toBe(true)
       if (!('onramp' in sim)) return
       expect(sim.onramp.valid).toBe(true)
-      expect(sim.onramp.paidToDeposit).toBeGreaterThanOrEqual(AMOUNT_SATS)
+      expect(sim.onramp.paidToDeposit).toBe(AMOUNT_SATS)
     })
 
     // ── simulateSwidge offramp ───────────────────────────────────────────────
