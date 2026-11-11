@@ -19,7 +19,6 @@ import {
   onrampQuote,
 } from './fixtures/gateway.js'
 import {
-  FUTURE_SEGWIT_ADDRESS,
   OVERPAYING_TXID,
   OVERPAYING_TX_HEX,
   SIGNED_TXID,
@@ -144,11 +143,6 @@ describe('simulateSwidge: onramp', () => {
       'no address',
       'not-an-address',
       'order deposit address is not a Bitcoin mainnet address: not-an-address',
-    ],
-    [
-      'a future-segwit (v2) address',
-      FUTURE_SEGWIT_ADDRESS,
-      `order deposit address has witness version 2, which anyone can spend: ${FUTURE_SEGWIT_ADDRESS}`,
     ],
   ])('refuses a deposit address that is %s before signing', async (_label, address, message) => {
     createOrder.mockResolvedValue({ onramp: { order_id: 'order-onramp', address } })

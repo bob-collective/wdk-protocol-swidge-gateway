@@ -25,7 +25,3 @@ export const EXAMPLE_TX_HEX =
   '010000000100000000000000000000000000000000000000000000000000000000000000000000000000ffffffff' +
   '01a086010000000000225120b3ca4128b32c21f60bab796f393690cc7910b4d852ff1ce3dddeb98d03d758da00000000'
 export const EXAMPLE_TXID = '410b24406afd9e2831ecb2058610dd10606ddb795ebf1d7c779f2fda4d9ae602'
-
-/** A mainnet witness v2 ("future segwit") address: valid bech32m, but anyone can spend its output. */
-export const FUTURE_SEGWIT_ADDRESS =
-  'bc1zqurswpc8qurswpc8qurswpc8qurswpc8qurswpc8qurswpc8qursc3hgeh'

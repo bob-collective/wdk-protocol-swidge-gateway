@@ -163,7 +163,7 @@ Turns a `getRequiredApproval()` result into a `TronSmartContractCall` that `Wall
 
 #### `simulateSwidge()` on Bitcoin
 
-`onramp` is `{ txid, valid, paidToDeposit }`: the txid of the signed transaction, whether it pays the order's deposit address exactly the quoted amount, and the sats it pays there. The signed transaction itself is not returned — it pays a real order's deposit address, so anyone holding it could broadcast it. The deposit address must be a standard Bitcoin mainnet address (p2pkh, p2sh, p2wpkh, p2wsh or p2tr; a witness v2+ "future segwit" address, which anyone can spend today, is refused), or `simulateSwidge()` (and `swidge()`) throw `VALIDATION_ERROR` before signing.
+`onramp` is `{ txid, valid, paidToDeposit }`: the txid of the signed transaction, whether it pays the order's deposit address exactly the quoted amount, and the sats it pays there. The signed transaction itself is not returned — it pays a real order's deposit address, so anyone holding it could broadcast it. The deposit address must be a Bitcoin mainnet address, or `simulateSwidge()` (and `swidge()`) throw `VALIDATION_ERROR` before signing.
 
 #### `simulateSwidge()` on Tron
 
