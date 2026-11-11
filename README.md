@@ -291,9 +291,9 @@ import GatewaySwidge from '@gobob/wdk-protocol-swidge-gateway'
 | Parameter               | Type                                     | Description                                                                                                                                |
 | ----------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `account`               | `object`                                 | WDK wallet account (BTC, EVM or Tron).                                                                                                     |
-| `config.apiUrl`         | `string?`                                | Gateway API base URL. Must be `https:`; plain `http:` is accepted only on `localhost`, `127.0.0.1` and `[::1]` (local mock gateways).        |
+| `config.apiUrl`         | `string?`                                | Gateway API base URL. Must be `https:`; plain `http:` is accepted only on `localhost`, `127.0.0.1` and `[::1]` (local mock gateways). The default transport refuses redirects.        |
 | `config.allowInsecureApiUrl` | `boolean?`                          | Accept a plain-`http:` `apiUrl` on any host, for test setups. Never against a real gateway: over plain HTTP a network attacker can replace the onramp's BTC deposit address. Default: `false`. |
-| `config.timeoutMs`      | `number?`                                | Limit on each gateway request, response body included, in ms. A request that runs over is aborted and retried as transient. Default: `30000`. Ignored when `config.http` is set. |
+| `config.timeoutMs`      | `number?`                                | Limit on each gateway request attempt, response body included, in ms; at most `60000`. An attempt that runs over is aborted and retried as transient. Default: `30000`. Ignored when `config.http` is set. |
 | `config.bearerToken`    | `string?`                                | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee, attributes volume to BOB).                                         |
 | `config.http`           | `object?`                                | Injectable HTTP transport (useful for testing).                                                                                            |
 | `config.affiliates`     | `Array<{address: string, bps: number}>?` | Affiliate fee entries.                                                                                                                     |
@@ -348,7 +348,7 @@ For offramp and token-swap routes, call `getRequiredApproval()` and `approve()` 
 
 #### `getSwidgeStatus(id) → Promise<SwidgeStatusResult>`
 
-Polls order status by the `id` returned from `swidge()`. `transactions` lists the `source`, `destination` and `refund` hashes the order has so far, each with its `chain`. A gateway status the module does not recognise throws `GATEWAY_HTTP_ERROR` rather than reading as `pending`.
+Polls order status by the `id` returned from `swidge()`. `transactions` lists the `source`, `destination` and `refund` hashes the order has so far, each with its `chain`. An empty get-order response, or a gateway status the module does not recognise, throws `GATEWAY_HTTP_ERROR` rather than reading as `pending`.
 
 #### `getSupportedChains() → Promise<SwidgeSupportedChain[]>`
 

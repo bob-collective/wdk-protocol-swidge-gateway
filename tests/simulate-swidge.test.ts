@@ -19,6 +19,7 @@ import {
   onrampQuote,
 } from './fixtures/gateway.js'
 import {
+  FUTURE_SEGWIT_ADDRESS,
   OVERPAYING_TXID,
   OVERPAYING_TX_HEX,
   SIGNED_TXID,
@@ -133,18 +134,29 @@ describe('simulateSwidge: onramp', () => {
   )
 
   test.each([
-    ['a testnet address', 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx'],
-    ['no address', 'not-an-address'],
-  ])('refuses a deposit address that is %s before signing', async (_label, address) => {
+    [
+      'a testnet address',
+      'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
+      'order deposit address is not a Bitcoin mainnet address: ' +
+        'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
+    ],
+    [
+      'no address',
+      'not-an-address',
+      'order deposit address is not a Bitcoin mainnet address: not-an-address',
+    ],
+    [
+      'a future-segwit (v2) address',
+      FUTURE_SEGWIT_ADDRESS,
+      `order deposit address has witness version 2, which anyone can spend: ${FUTURE_SEGWIT_ADDRESS}`,
+    ],
+  ])('refuses a deposit address that is %s before signing', async (_label, address, message) => {
     createOrder.mockResolvedValue({ onramp: { order_id: 'order-onramp', address } })
     const account = new DummyBtcAccount()
     const sw = new GatewaySwidge(account as never, { fromChain: 'bitcoin', client })
 
     await expect(sw.simulateSwidge(ONRAMP)).rejects.toMatchObject(
-      gatewayError(
-        ERR.VALIDATION,
-        `order deposit address is not a Bitcoin mainnet address: ${address}`
-      )
+      gatewayError(ERR.VALIDATION, message)
     )
     expect(account.signTransaction).not.toHaveBeenCalled()
   })

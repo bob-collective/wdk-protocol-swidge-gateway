@@ -37,6 +37,12 @@ function withoutCredentials(url: string): string {
 export const DEFAULT_TIMEOUT_MS = 30_000
 
 /**
+ * Upper bound on `timeoutMs`: one minute. No gateway call should take longer, and an unbounded
+ * value could exceed the 2^31 − 1 ms a timer holds, which Node turns into 1 ms.
+ */
+export const MAX_TIMEOUT_MS = 60_000
+
+/**
  * Builds the default transport on `fetch`. Each request, body included, must finish within
  * `timeoutMs`, or it is aborted and fails with a `GATEWAY_HTTP_ERROR` the gateway client retries
  * as transient.
@@ -77,6 +83,9 @@ export function createDefaultTransport(
       headers: { 'content-type': 'application/json', ...(headers || {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
+      // fetch follows an https → http redirect (resending a POST body on 307/308), which would
+      // undo the https-only apiUrl check; the gateway API has no reason to redirect.
+      redirect: 'error',
     })
     const text = await res.text().catch(() => '')
     let parsed: unknown = null

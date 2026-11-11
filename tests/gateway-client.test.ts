@@ -100,6 +100,7 @@ describe('GatewayClient: the default fetch transport', () => {
       headers: { 'content-type': 'application/json' },
       body: undefined,
       signal: expect.any(AbortSignal),
+      redirect: 'error',
     })
     expect(body).toEqual({ ok: true })
   })
@@ -116,6 +117,7 @@ describe('GatewayClient: the default fetch transport', () => {
       headers: { 'content-type': 'application/json', authorization: 'Bearer dummy-bearer-token' },
       body: '{"onramp":{"inputAmount":{"amount":"50000"}}}',
       signal: expect.any(AbortSignal),
+      redirect: 'error',
     })
   })
 
@@ -177,16 +179,22 @@ describe('GatewayClient: the default fetch transport', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  test.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+  test.each([0, -1, 1.5, 60_001, Number.MAX_SAFE_INTEGER, Number.NaN, Number.POSITIVE_INFINITY])(
     'refuses timeoutMs %s',
     (timeoutMs) => {
       vi.stubGlobal('fetch', fetchMock)
 
       expect(() => new GatewayClient({ apiUrl: API, timeoutMs })).toThrow(
-        new ValueError(`timeoutMs must be a positive integer, got ${timeoutMs}`)
+        new ValueError(`timeoutMs must be a positive integer up to 60000, got ${timeoutMs}`)
       )
     }
   )
+
+  test('accepts the 60000ms maximum timeoutMs', () => {
+    vi.stubGlobal('fetch', fetchMock)
+
+    expect(() => new GatewayClient({ apiUrl: API, timeoutMs: 60_000 })).not.toThrow()
+  })
 
   test('throws a clear error when the runtime has no fetch', () => {
     vi.stubGlobal('fetch', undefined)

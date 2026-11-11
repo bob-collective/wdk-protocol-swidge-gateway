@@ -182,6 +182,20 @@ describe('getSwidgeStatus', () => {
     })
   })
 
+  test.each([
+    ['an empty body', null],
+    ['a non-object body', 'not found'],
+  ])('refuses a get-order response with %s', async (_label, body) => {
+    getOrder.mockResolvedValue(body)
+
+    await expect(gatewaySwidge().getSwidgeStatus(ORDER_ID)).rejects.toMatchObject({
+      name: 'GatewaySwidgeError',
+      code: 'GATEWAY_HTTP_ERROR',
+      message: `get-order returned no order for ${ORDER_ID}`,
+      cause: body,
+    })
+  })
+
   test('a source transaction not yet indexed is left out', async () => {
     getOrder.mockResolvedValue({
       id: ORDER_ID,

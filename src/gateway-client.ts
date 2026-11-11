@@ -1,5 +1,5 @@
 import { ValueError } from '@tetherto/wdk-wallet/protocols'
-import { createDefaultTransport } from './http.js'
+import { MAX_TIMEOUT_MS, createDefaultTransport } from './http.js'
 import type { HttpTransport } from './http.js'
 import { GatewaySwidgeError, ERR } from './errors.js'
 
@@ -77,8 +77,9 @@ export interface GatewayClientConfig {
   /** Retries of a transient failure per request, with linear backoff (default: 3). */
   maxRetries?: number
   /**
-   * Limit on each request, response body included, in milliseconds (default: 30000). A request
-   * that runs over is aborted and retried as transient. Ignored when `http` is set.
+   * Limit on each request attempt, response body included, in milliseconds (default: 30000; at
+   * most 60000). An attempt that runs over is aborted and retried as transient, so a call can
+   * take up to `maxRetries + 1` times this. Ignored when `http` is set.
    */
   timeoutMs?: number
   /**
@@ -105,7 +106,7 @@ export class GatewayClient {
    * @param [config] - The client configuration.
    * @throws {ValueError} If `config.apiUrl` is not a URL, or not `https:` — plain `http:` is
    *   accepted only on `localhost`, `127.0.0.1` and `[::1]`, or with `allowInsecureApiUrl`.
-   * @throws {ValueError} If `config.timeoutMs` is not a positive safe integer.
+   * @throws {ValueError} If `config.timeoutMs` is not a positive integer of at most 60000.
    * @throws {GatewaySwidgeError} `NOT_SUPPORTED` if `config.http` is unset and the runtime has no
    *   global `fetch`.
    */
@@ -113,8 +114,13 @@ export class GatewayClient {
     const apiUrl = config.apiUrl || DEFAULT_API
     assertSecureApiUrl(apiUrl, config.allowInsecureApiUrl === true)
     const { timeoutMs } = config
-    if (timeoutMs !== undefined && !(Number.isSafeInteger(timeoutMs) && timeoutMs > 0))
-      throw new ValueError(`timeoutMs must be a positive integer, got ${timeoutMs}`)
+    if (
+      timeoutMs !== undefined &&
+      !(Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= MAX_TIMEOUT_MS)
+    )
+      throw new ValueError(
+        `timeoutMs must be a positive integer up to ${MAX_TIMEOUT_MS}, got ${timeoutMs}`
+      )
     this._base = apiUrl.replace(/\/$/, '')
     this._bearerToken = config.bearerToken
     this._http = config.http || createDefaultTransport({ timeoutMs })

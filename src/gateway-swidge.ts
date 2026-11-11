@@ -160,7 +160,10 @@ export interface GatewaySwidgeConfig extends SwidgeProtocolConfig {
    * See `GatewayClientConfig.allowInsecureApiUrl`.
    */
   allowInsecureApiUrl?: boolean
-  /** Limit on each gateway request, in milliseconds (default: 30000). Ignored when `http` is set. */
+  /**
+   * Limit on each gateway request attempt, in milliseconds (default: 30000; at most 60000).
+   * Ignored when `http` is set.
+   */
   timeoutMs?: number
   /**
    * Gateway client to use instead of building one from `apiUrl`, `bearerToken`, `http`,
@@ -237,8 +240,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer (a bigint, a safe
    *   integer or a decimal string), or is set without `config.fromChain`.
    * @throws {ValueError} If `config.apiUrl` is not an `https:` URL (plain `http:` only on
-   *   loopback, or with `allowInsecureApiUrl`), or `config.timeoutMs` is not a positive integer,
-   *   and `config.client` is unset.
+   *   loopback, or with `allowInsecureApiUrl`), or `config.timeoutMs` is not a positive integer up
+   *   to 60000, and `config.client` is unset.
    */
   constructor(account?: undefined, config?: GatewaySwidgeConfig)
   /**
@@ -252,8 +255,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer (a bigint, a safe
    *   integer or a decimal string), or is set without `config.fromChain`.
    * @throws {ValueError} If `config.apiUrl` is not an `https:` URL (plain `http:` only on
-   *   loopback, or with `allowInsecureApiUrl`), or `config.timeoutMs` is not a positive integer,
-   *   and `config.client` is unset.
+   *   loopback, or with `allowInsecureApiUrl`), or `config.timeoutMs` is not a positive integer up
+   *   to 60000, and `config.client` is unset.
    */
   constructor(account: IWalletAccountReadOnly, config?: GatewaySwidgeConfig)
   /**
@@ -267,8 +270,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @throws {ValueError} If `config.maxNativeFee` is not a non-negative integer (a bigint, a safe
    *   integer or a decimal string), or is set without `config.fromChain`.
    * @throws {ValueError} If `config.apiUrl` is not an `https:` URL (plain `http:` only on
-   *   loopback, or with `allowInsecureApiUrl`), or `config.timeoutMs` is not a positive integer,
-   *   and `config.client` is unset.
+   *   loopback, or with `allowInsecureApiUrl`), or `config.timeoutMs` is not a positive integer up
+   *   to 60000, and `config.client` is unset.
    */
   constructor(account: IWalletAccount, config?: GatewaySwidgeConfig)
   constructor(account?: IWalletAccountReadOnly | IWalletAccount, config: GatewaySwidgeConfig = {}) {
@@ -510,7 +513,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   native value than `maxNativeFee` on top of the swapped amount, or (Tron) a `feeLimit` above
    *   100 TRX. Thrown before signing.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp order's deposit address is not a
-   *   Bitcoin mainnet address. Thrown before signing.
+   *   standard Bitcoin mainnet address (a witness v2+ address, which anyone can spend, included).
+   *   Thrown before signing.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if register-tx fails or reports another txid
    *   than the one signed (onramp). The transaction may still have been broadcast: check the chain
    *   or `getSwidgeStatus()` before resending.
@@ -761,7 +765,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   native value than `maxNativeFee` on top of the swapped amount, or (Tron) a `feeLimit` above
    *   100 TRX. Thrown before signing.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp order's deposit address is not a
-   *   Bitcoin mainnet address. Thrown before signing.
+   *   standard Bitcoin mainnet address (a witness v2+ address, which anyone can spend, included).
+   *   Thrown before signing.
    * @throws {AccountRequiredError} If the account lacks the method the dry run calls, before any
    *   gateway call: `signTransaction` (Bitcoin), `quoteSendTransaction` (EVM) or `getAddress`
    *   (Tron).
@@ -831,11 +836,15 @@ export class GatewaySwidge extends SwidgeProtocol {
    * @returns The order status and every transaction hash it exposes: source, destination payouts
    *   and refunds.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if the gateway request fails (transient
-   *   errors are retried first), or the order's status is none the module knows (`success`,
-   *   `refunded`, `failed`, `inProgress`).
+   *   errors are retried first), returns no order (an empty or non-JSON body), or the order's
+   *   status is none the module knows (`success`, `refunded`, `failed`, `inProgress`).
    */
   async getSwidgeStatus(id: string, _options?: SwidgeStatusOptions): Promise<SwidgeStatusResult> {
     const order = await this._client.getOrder(id)
+    if (!order || typeof order !== 'object')
+      throw new GatewaySwidgeError(ERR.HTTP, `get-order returned no order for ${id}`, {
+        cause: order,
+      })
     return toSwidgeStatus(order as Parameters<typeof toSwidgeStatus>[0])
   }
 

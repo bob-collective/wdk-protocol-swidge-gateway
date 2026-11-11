@@ -30,9 +30,9 @@ new GatewaySwidge(account, config?)
 | Parameter               | Type                                    | Default             | Description                                                                                        |
 | ----------------------- | --------------------------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
 | `account`               | `object`                                | —                   | WDK wallet account (BTC, EVM or Tron).                                                             |
-| `config.apiUrl`         | `string`                                | BOB Gateway mainnet | Gateway API base URL. Must be `https:`; plain `http:` only on `localhost`, `127.0.0.1` and `[::1]`, else `ValueError`. |
+| `config.apiUrl`         | `string`                                | BOB Gateway mainnet | Gateway API base URL. Must be `https:`; plain `http:` only on `localhost`, `127.0.0.1` and `[::1]`, else `ValueError`. The default transport refuses redirects, so an `https:` → `http:` redirect cannot bypass this. |
 | `config.allowInsecureApiUrl` | `boolean`                         | `false`             | Accept a plain-`http:` `apiUrl` on any host, for test setups. Never against a real gateway: over plain HTTP a network attacker can replace the onramp's BTC deposit address, which no check can pin. |
-| `config.timeoutMs`      | `number`                                | `30000`             | Limit on each gateway request, response body included, in ms. A request that runs over is aborted and retried as transient (up to 3 retries), then throws `GATEWAY_HTTP_ERROR`. Ignored when `config.http` is set. |
+| `config.timeoutMs`      | `number`                                | `30000`             | Limit on each gateway request attempt, response body included, in ms; at most `60000` (else `ValueError`). A request that runs over is aborted and retried as transient (up to 3 retries), then throws `GATEWAY_HTTP_ERROR`. Ignored when `config.http` is set. |
 | `config.bearerToken`    | `string`                                | BOB attribution key | API Bearer token. Defaults to BOB's gateway-wdk attribution key (0 fee).                           |
 | `config.http`           | `object`                                | —                   | Injectable HTTP transport (for tests).                                                             |
 | `config.affiliates`     | `Array<{address: string, bps: number}>` | —                   | Affiliate fee entries.                                                                             |
@@ -124,7 +124,7 @@ Returns the current status of an order by the `id` from `SwidgeResult`.
 | `status`       | `string`              | `pending`, `completed`, `failed`, `refund-pending` or `refunded`.                                                                                             |
 | `transactions` | `SwidgeTransaction[]` | Every hash the order exposes, as `{ hash, chain, type }`: the `source` tx once indexed, `destination` payouts once completed, `refund` txs once refunded.   |
 
-A gateway status other than `success`, `refunded`, `failed` or `inProgress` throws `GatewaySwidgeError` `GATEWAY_HTTP_ERROR` instead of being read as `pending`.
+An empty or non-JSON get-order response, or a gateway status other than `success`, `refunded`, `failed` or `inProgress`, throws `GatewaySwidgeError` `GATEWAY_HTTP_ERROR` instead of being read as `pending`.
 
 #### `getSupportedChains() → Promise<SwidgeSupportedChain[]>`
 
@@ -163,7 +163,7 @@ Turns a `getRequiredApproval()` result into a `TronSmartContractCall` that `Wall
 
 #### `simulateSwidge()` on Bitcoin
 
-`onramp` is `{ txid, valid, paidToDeposit }`: the txid of the signed transaction, whether it pays the order's deposit address exactly the quoted amount, and the sats it pays there. The signed transaction itself is not returned — it pays a real order's deposit address, so anyone holding it could broadcast it. The deposit address must be a Bitcoin mainnet address, or `simulateSwidge()` (and `swidge()`) throw `VALIDATION_ERROR` before signing.
+`onramp` is `{ txid, valid, paidToDeposit }`: the txid of the signed transaction, whether it pays the order's deposit address exactly the quoted amount, and the sats it pays there. The signed transaction itself is not returned — it pays a real order's deposit address, so anyone holding it could broadcast it. The deposit address must be a standard Bitcoin mainnet address (p2pkh, p2sh, p2wpkh, p2wsh or p2tr; a witness v2+ "future segwit" address, which anyone can spend today, is refused), or `simulateSwidge()` (and `swidge()`) throw `VALIDATION_ERROR` before signing.
 
 #### `simulateSwidge()` on Tron
 
