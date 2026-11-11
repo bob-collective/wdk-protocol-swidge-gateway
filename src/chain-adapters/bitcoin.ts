@@ -31,8 +31,24 @@ export interface BtcSimulateResult {
   paidToDeposit: bigint
 }
 
-/** The output script of an order's deposit address; refuses anything but a mainnet address. */
+/**
+ * The output script of an order's deposit address; refuses anything but a standard mainnet address
+ * (p2pkh, p2sh, p2wpkh, p2wsh, p2tr).
+ */
 function depositScript(address: string): Buffer {
+  // bitcoinjs-lib accepts witness v2–16 ("future segwit") addresses with a console warning, but
+  // nothing spends them under today's consensus rules: whoever sees the output can take it.
+  let witnessVersion: number | undefined
+  try {
+    witnessVersion = btcAddress.fromBech32(address).version
+  } catch {
+    // Not bech32: toOutputScript decides.
+  }
+  if (witnessVersion !== undefined && witnessVersion > 1)
+    throw new GatewaySwidgeError(
+      ERR.VALIDATION,
+      `order deposit address has witness version ${witnessVersion}, which anyone can spend: ${address}`
+    )
   try {
     return btcAddress.toOutputScript(address, networks.bitcoin)
   } catch (err) {

@@ -19,7 +19,7 @@ import {
   onrampOrder,
   onrampQuote,
 } from './fixtures/gateway.js'
-import { SIGNED_TXID, SIGNED_TX_HEX } from './fixtures/bitcoin.js'
+import { FUTURE_SEGWIT_ADDRESS, SIGNED_TXID, SIGNED_TX_HEX } from './fixtures/bitcoin.js'
 import { BTC_RECIPIENT, OWNER, USDT, tronOfframpQuote } from './fixtures/tron.js'
 
 const getQuote = vi.fn()
@@ -160,6 +160,11 @@ describe('swidge: onramp', () => {
       'no address',
       'not-an-address',
       'order deposit address is not a Bitcoin mainnet address: not-an-address',
+    ],
+    [
+      'a future-segwit (v2) address',
+      FUTURE_SEGWIT_ADDRESS,
+      `order deposit address has witness version 2, which anyone can spend: ${FUTURE_SEGWIT_ADDRESS}`,
     ],
   ])('refuses a deposit address that is %s before signing', async (_label, address, message) => {
     createOrder.mockResolvedValue({ onramp: { order_id: 'order-onramp', address } })

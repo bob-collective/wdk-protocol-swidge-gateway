@@ -513,7 +513,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   native value than `maxNativeFee` on top of the swapped amount, or (Tron) a `feeLimit` above
    *   100 TRX. Thrown before signing.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp order's deposit address is not a
-   *   Bitcoin mainnet address. Thrown before signing.
+   *   standard Bitcoin mainnet address (a witness v2+ address, which anyone can spend, included).
+   *   Thrown before signing.
    * @throws {GatewaySwidgeError} `GATEWAY_HTTP_ERROR` if register-tx fails or reports another txid
    *   than the one signed (onramp). The transaction may still have been broadcast: check the chain
    *   or `getSwidgeStatus()` before resending.
@@ -764,7 +765,8 @@ export class GatewaySwidge extends SwidgeProtocol {
    *   native value than `maxNativeFee` on top of the swapped amount, or (Tron) a `feeLimit` above
    *   100 TRX. Thrown before signing.
    * @throws {GatewaySwidgeError} `VALIDATION_ERROR` if an onramp order's deposit address is not a
-   *   Bitcoin mainnet address. Thrown before signing.
+   *   standard Bitcoin mainnet address (a witness v2+ address, which anyone can spend, included).
+   *   Thrown before signing.
    * @throws {AccountRequiredError} If the account lacks the method the dry run calls, before any
    *   gateway call: `signTransaction` (Bitcoin), `quoteSendTransaction` (EVM) or `getAddress`
    *   (Tron).
