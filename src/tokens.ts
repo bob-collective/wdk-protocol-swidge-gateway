@@ -23,6 +23,11 @@ export const TOKENS: Record<string, TokenInfo> = {
     decimals: 8,
     name: 'Wrapped BTC',
   },
+  'arbitrum:0x6c84a8f1c29108f47a79964b5fe888d4f4d0de40': {
+    symbol: 'tBTC',
+    decimals: 18,
+    name: 'Arbitrum tBTC v2',
+  },
   'arbitrum:0xaf88d065e77c8cc2239327c5edb3a432268e5831': {
     symbol: 'USDC',
     decimals: 6,
@@ -68,6 +73,11 @@ export const TOKENS: Record<string, TokenInfo> = {
     symbol: 'WBTC',
     decimals: 8,
     name: 'Wrapped BTC',
+  },
+  'base:0x236aa50979d5f3de3bd1eeb40e81137f22ab794b': {
+    symbol: 'tBTC',
+    decimals: 18,
+    name: 'Base tBTC v2',
   },
   'base:0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42': { symbol: 'EURC', decimals: 6, name: 'EURC' },
   'base:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': {
@@ -137,6 +147,11 @@ export const TOKENS: Record<string, TokenInfo> = {
     symbol: 'ETH',
     decimals: 18,
     name: 'Ether',
+  },
+  'ethereum:0x18084fba666a33d37592fa2633fd49a74dd93a88': {
+    symbol: 'tBTC',
+    decimals: 18,
+    name: 'tBTC v2',
   },
   'ethereum:0x1abaea1f7c830bd89acc67ec4af516284b1bc33c': {
     symbol: 'EURC',
