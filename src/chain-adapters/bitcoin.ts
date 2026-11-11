@@ -9,11 +9,7 @@ initEccLib(ecc)
 
 export interface BtcAccount {
   getAddress(): string | Promise<string>
-  signTransaction?: (params: {
-    to: string
-    value: bigint
-    feeRate?: number
-  }) => Promise<string>
+  signTransaction?: (params: { to: string; value: bigint; feeRate?: number }) => Promise<string>
 }
 
 interface BtcPayload {
@@ -22,16 +18,46 @@ interface BtcPayload {
   [key: string]: unknown
 }
 
-/** Dry run of an onramp's source transaction. */
+/**
+ * Dry run of an onramp's source transaction. The signed transaction itself is left out: it pays
+ * a real order's deposit address, so anyone holding it could broadcast it.
+ */
 export interface BtcSimulateResult {
-  /** The signed, unbroadcast Bitcoin transaction. */
-  signedTxHex: string
-  /** Its txid. */
+  /** The txid of the signed, unbroadcast transaction. */
   txid: string
-  /** Whether the transaction pays the order's deposit address at least the quoted amount. */
+  /** Whether the transaction pays the order's deposit address exactly the quoted amount. */
   valid: boolean
   /** Satoshis the transaction pays to the deposit address. */
   paidToDeposit: bigint
+}
+
+/**
+ * The output script of an order's deposit address; refuses anything but a standard mainnet address
+ * (p2pkh, p2sh, p2wpkh, p2wsh, p2tr).
+ */
+function depositScript(address: string): Buffer {
+  // bitcoinjs-lib accepts witness v2–16 ("future segwit") addresses with a console warning, but
+  // nothing spends them under today's consensus rules: whoever sees the output can take it.
+  let witnessVersion: number | undefined
+  try {
+    witnessVersion = btcAddress.fromBech32(address).version
+  } catch {
+    // Not bech32: toOutputScript decides.
+  }
+  if (witnessVersion !== undefined && witnessVersion > 1)
+    throw new GatewaySwidgeError(
+      ERR.VALIDATION,
+      `order deposit address has witness version ${witnessVersion}, which anyone can spend: ${address}`
+    )
+  try {
+    return btcAddress.toOutputScript(address, networks.bitcoin)
+  } catch (err) {
+    throw new GatewaySwidgeError(
+      ERR.VALIDATION,
+      `order deposit address is not a Bitcoin mainnet address: ${address}`,
+      { cause: err }
+    )
+  }
 }
 
 export const bitcoinAdapter = {
@@ -49,6 +75,7 @@ export const bitcoinAdapter = {
     if (typeof account.signTransaction !== 'function') {
       throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, 'bitcoin account cannot sign transactions')
     }
+    depositScript(payload.address)
     const signedTxHex = await account.signTransaction({
       to: payload.address,
       value: payload.amount,
@@ -59,10 +86,9 @@ export const bitcoinAdapter = {
   },
 
   /**
-   * Sign WITHOUT broadcasting, then validate that at least one output pays
-   * `payload.address` with total value ≥ `payload.amount`.
-   * Returns the signed tx hex, txid, validation result, and the total satoshis
-   * paid to the deposit address.
+   * Sign WITHOUT broadcasting, then check that the outputs to `payload.address` total exactly
+   * `payload.amount`. Returns the txid, that check, and the satoshis paid to the deposit address
+   * — never the signed transaction.
    */
   async simulate(
     account: BtcAccount,
@@ -72,6 +98,7 @@ export const bitcoinAdapter = {
     if (typeof account.signTransaction !== 'function') {
       throw new GatewaySwidgeError(ERR.NOT_SUPPORTED, 'bitcoin account cannot sign transactions')
     }
+    const targetScript = depositScript(payload.address)
     const signedTxHex = await account.signTransaction({
       to: payload.address,
       value: payload.amount,
@@ -79,14 +106,13 @@ export const bitcoinAdapter = {
     })
     const parsed = Transaction.fromHex(signedTxHex)
     const txid = parsed.getId()
-    const targetScript = btcAddress.toOutputScript(payload.address, networks.bitcoin)
     let paidToDeposit = 0n
     for (const out of parsed.outs) {
       if ((out.script as Buffer).equals(targetScript)) {
         paidToDeposit += BigInt(out.value)
       }
     }
-    const valid = paidToDeposit >= payload.amount
-    return { signedTxHex, txid, valid, paidToDeposit }
+    const valid = paidToDeposit === payload.amount
+    return { txid, valid, paidToDeposit }
   },
 }
