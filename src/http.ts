@@ -21,6 +21,18 @@ export interface HttpTransport {
   ): Promise<{ status: number; body: unknown }>
 }
 
+/** `url` with any `user:password@` dropped, so an error message never carries it. */
+function withoutCredentials(url: string): string {
+  try {
+    const u = new URL(url)
+    u.username = ''
+    u.password = ''
+    return u.href
+  } catch {
+    return '(unparseable url)'
+  }
+}
+
 /** Default limit on one gateway request, response body included, in milliseconds. */
 export const DEFAULT_TIMEOUT_MS = 30_000
 
@@ -87,7 +99,8 @@ export function createDefaultTransport(
           reject(
             new GatewaySwidgeError(
               ERR.HTTP,
-              `gateway request timeout: no response to ${method} ${url} within ${timeoutMs}ms`
+              `gateway request timeout: no response to ${method} ${withoutCredentials(url)} ` +
+                `within ${timeoutMs}ms`
             )
           )
         }, timeoutMs)

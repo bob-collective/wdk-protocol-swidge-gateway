@@ -147,6 +147,23 @@ describe('GatewayClient: the default fetch transport', () => {
     expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true)
   })
 
+  test('a timeout error does not echo credentials in the apiUrl', async () => {
+    fetchMock.mockImplementation(hangingFetch(true))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new GatewayClient({
+      apiUrl: 'https://user:secret@dummy-api.url',
+      timeoutMs: 20,
+      maxRetries: 0,
+    })
+
+    await expect(client.getRoutes()).rejects.toMatchObject(
+      gatewayError(
+        ERR.HTTP,
+        `gateway request timeout: no response to GET ${API}/v4/get-routes within 20ms`
+      )
+    )
+  })
+
   test('a timed-out request is retried as transient', async () => {
     fetchMock
       .mockImplementationOnce(hangingFetch(true))
