@@ -15,8 +15,8 @@ importers:
         specifier: ^1.5.3
         version: 1.5.3(bare-pipe@4.4.0(bare-abort-controller@1.1.2)(bare-buffer@3.7.1))(bare-tcp@2.6.1(bare-abort-controller@1.1.2)(bare-buffer@3.7.1)(bare-pipe@4.4.0(bare-abort-controller@1.1.2)(bare-buffer@3.7.1)))
       bitcoinjs-lib:
-        specifier: 6.1.7
-        version: 6.1.7
+        specifier: 6.1.10
+        version: 6.1.10
       tronweb:
         specifier: 6.5.1
         version: 6.5.1
@@ -1292,8 +1292,8 @@ packages:
     resolution: {integrity: sha512-O1htyufFTYy3EO0JkHg2CLykdXEtV2ssqw47Gq9A0WByp662xpJnMEB9m43LZjsSDjIAOozWRExlFQk2hlV1XQ==}
     engines: {node: '>=4.5.0'}
 
-  bitcoinjs-lib@6.1.7:
-    resolution: {integrity: sha512-tlf/r2DGMbF7ky1MgUqXHzypYHakkEnm0SZP23CJKIqNY/5uNAnMbFhMJdhjrL/7anfb/U8+AlpdjPWjPnAalg==}
+  bitcoinjs-lib@6.1.10:
+    resolution: {integrity: sha512-9KpnS5JKVP0j0yfTsBNFIsNA6+JdBDb7VtL35F20I/pJYobosi3TmZFGtu6qxhJCfb0vubJixr5Zv61/lUYETw==}
     engines: {node: '>=8.0.0'}
 
   bitcoinjs-lib@7.0.1:
@@ -3543,7 +3543,7 @@ snapshots:
 
   bip68@1.0.4: {}
 
-  bitcoinjs-lib@6.1.7:
+  bitcoinjs-lib@6.1.10:
     dependencies:
       '@noble/hashes': 1.8.0
       bech32: 2.0.0

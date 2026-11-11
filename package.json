@@ -78,7 +78,7 @@
   "dependencies": {
     "@bitcoinerlab/secp256k1": "2.0.0",
     "bare-node-runtime": "^1.5.3",
-    "bitcoinjs-lib": "6.1.7",
+    "bitcoinjs-lib": "6.1.10",
     "tronweb": "6.5.1"
   },
   "peerDependencies": {
