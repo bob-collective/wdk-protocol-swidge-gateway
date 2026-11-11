@@ -79,7 +79,7 @@
     "@bitcoinerlab/secp256k1": "2.0.0",
     "bare-node-runtime": "^1.5.3",
     "bitcoinjs-lib": "6.1.10",
-    "tronweb": "6.5.1"
+    "tronweb": "6.5.2"
   },
   "peerDependencies": {
     "@tetherto/wdk-wallet": ">=1.0.0-beta.17 <2.0.0"
