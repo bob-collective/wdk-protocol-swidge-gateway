@@ -27,10 +27,7 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      # Runtime deps only. pnpm-workspace.yaml `auditConfig.ignoreGhsas` allowlists the axios advisories
-      # that tronweb@6.5.1 (latest) pulls in by pinning axios to exactly 1.18.0 — unfixable without
-      # an override, which consumers would ignore anyway. Any other advisory fails the build.
-      # Drop the allowlist once tronweb ships axios >= 1.20.0 (see AGENTS.md).
+      # Runtime deps only; any advisory fails the build (see AGENTS.md).
       - run: pnpm audit --prod
       - run: pnpm lint
       - run: pnpm build
