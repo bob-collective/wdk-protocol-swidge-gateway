@@ -11,7 +11,7 @@ permissions: {}
 jobs:
   validate:
     name: Validate quote + simulate (mainnet, no swap)
-    runs-on: bob-ubuntu-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
