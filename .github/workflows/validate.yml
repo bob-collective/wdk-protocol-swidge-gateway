@@ -12,6 +12,9 @@ jobs:
   validate:
     name: Validate quote + simulate (mainnet, no swap)
     runs-on: bob-ubuntu-latest
+    # SAF-0002: fork PRs must not run on the self-hosted fleet (geoblocking requires own runners;
+    # runners are ephemeral per-job ARC pods, secrets only on trusted events)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 15
     permissions:
       contents: read
