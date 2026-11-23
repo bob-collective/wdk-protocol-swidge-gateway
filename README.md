@@ -441,3 +441,5 @@ Pull requests welcome. Please open an issue first to discuss significant changes
 
 - [GitHub Issues](https://github.com/tetherto/wdk-wallet/issues)
 - [BOB Discord](https://discord.gg/gobob)
+
+<!-- review bot rollout check, 2026-11-23 -->
